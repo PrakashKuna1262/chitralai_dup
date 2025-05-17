@@ -1,0 +1,27 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/runtime-env"
+  to = "/.netlify/functions/get-runtime-env"
+  status = 200
+
+[[redirects]]
+  from = "/api/presign"
+  to = "/.netlify/functions/presign-url"
+  status = 200
+
+[[redirects]]
+  from = "/api/google-client-id"
+  to = "/.netlify/functions/get-google-client-id"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200 
