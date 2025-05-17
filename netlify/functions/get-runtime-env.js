@@ -42,14 +42,7 @@ exports.handler = async function(event, context) {
     VITE_AWS_SECRET_ACCESS_KEY: process.env.VITE_AWS_SECRET_ACCESS_KEY
   };
 
-  // Log to backend console for debugging (without sensitive info)
-  console.log('[get-runtime-env] preparing to send:');
-  console.log('[get-runtime-env] Region:', runtimeVariables.VITE_AWS_REGION);
-  console.log('[get-runtime-env] Bucket:', runtimeVariables.VITE_S3_BUCKET_NAME);
-  console.log('[get-runtime-env] Google Client ID configured:', 
-    runtimeVariables.VITE_GOOGLE_CLIENT_ID ? 'Yes' : 'No');
-  console.log('[get-runtime-env] AWS credentials configured:', 
-    runtimeVariables.VITE_AWS_ACCESS_KEY_ID && runtimeVariables.VITE_AWS_SECRET_ACCESS_KEY ? 'Yes' : 'No');
+  
 
   return {
     statusCode: 200,
