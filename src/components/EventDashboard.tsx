@@ -815,8 +815,9 @@ const EventDashboard = (props: EventDashboardProps) => {
 
                 await (await s3ClientPromise).send(uploadCommand);
 
-                // Generate the S3 URL
-                const coverImageUrl = `https://${bucketName}.s3.amazonaws.com/${coverImageKey}`;
+                // Generate the S3 URL with timestamp to prevent caching
+                const timestamp = Date.now();
+                const coverImageUrl = `https://${bucketName}.s3.amazonaws.com/${coverImageKey}?t=${timestamp}`;
 
                 // Update event with new cover image URL
                 const updatedEvent = {
@@ -877,7 +878,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                             className="flex-1 flex items-center justify-center bg-gradient-to-r from-blue-600 to-blue-700 text-white py-2 px-3 rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 text-sm font-semibold shadow-md"
                         >
                             <Plus className="w-4 h-4 mr-1" />
-                            Create
+                            Create New Event
                         </button>
                     </div>
                 </div>
@@ -914,7 +915,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                             className="flex items-center justify-center bg-gradient-to-r from-blue-600 to-blue-700 text-white py-2 px-4 rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 text-sm font-semibold shadow-md hover:shadow-lg"
                         >
                             <Plus className="w-4 h-4 mr-2" />
-                            Create Event
+                            Create New Event
                         </button>
                     </div>
                 </div>
@@ -938,6 +939,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                             titleColor="text-blue-900"
                         />
                     </div>
+                    
                 </div>
 
                 {/* Organization Info */}
@@ -966,7 +968,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                             >
                                 <QrCode className="w-4 h-4" />
-                                Show QR Code
+                                Show QR
                             </button>
                         </div>
                     </div>
@@ -1275,9 +1277,15 @@ const EventDashboard = (props: EventDashboardProps) => {
                                                 </button>
                                             </div>
                                         </div>
-                                        <p className="text-xs text-gray-600 mb-1.5">
-                                            <span className="font-medium">Date:</span> {new Date(event.date).toLocaleDateString()}
-                                        </p>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <p className="text-xs text-gray-600">
+                                                <span className="font-medium">Date:</span> {new Date(event.date).toLocaleDateString()}
+                                            </p>
+                                            <div className="flex items-center gap-1 text-xs text-blue-600">
+                                                <Image className="w-3 h-3" />
+                                                <span>{event.photoCount || 0} photos</span>
+                                            </div>
+                                        </div>
                                         {event.description && (
                                             <p className="text-xs text-gray-500 mb-2 line-clamp-2">{event.description}</p>
                                         )}
