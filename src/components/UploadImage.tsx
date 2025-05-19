@@ -5,6 +5,7 @@ import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, Sh
 import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getUserEvents, getEventById, updateEventData } from '../config/eventStorage';
+import { API_BASE } from '../config/apiBase';
 
 // Add type declaration for directory upload attributes
 declare module 'react' {
@@ -93,7 +94,7 @@ const pollForCompressedImage = async (bucketUrl: string, compressedKey: string, 
 
 // Add this helper function for getting a pre-signed URL
 const getPresignedUrl = async (key: string, contentType: string): Promise<string> => {
-  const response = await fetch('/api/presign', {
+  const response = await fetch(`${API_BASE}/api/presign`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, contentType })
@@ -108,6 +109,7 @@ const UploadImage = () => {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [images, setImages] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -124,6 +126,72 @@ const UploadImage = () => {
   const [authorizationMessage, setAuthorizationMessage] = useState<string>('');
   const [totalSize, setTotalSize] = useState<number>(0);
   const [uploadType, setUploadType] = useState<'folder' | 'photos'>('photos');
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Handle drag events
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const items = e.dataTransfer.items;
+    const files: File[] = [];
+
+    // Process dropped items
+    const processEntry = async (entry: FileSystemEntry) => {
+      if (entry.isFile) {
+        const file = await new Promise<File>((resolve) => {
+          (entry as FileSystemFileEntry).file(resolve);
+        });
+        if (file.type.startsWith('image/')) {
+          files.push(file);
+        }
+      } else if (entry.isDirectory) {
+        const reader = (entry as FileSystemDirectoryEntry).createReader();
+        const entries = await new Promise<FileSystemEntry[]>((resolve) => {
+          reader.readEntries(resolve);
+        });
+        for (const childEntry of entries) {
+          await processEntry(childEntry);
+        }
+      }
+    };
+
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry();
+          if (entry) {
+            await processEntry(entry);
+          }
+        }
+      }
+
+      if (files.length > 0) {
+        handleImageChange({ target: { files: files } } as any);
+      }
+    } catch (error) {
+      console.error('Error processing dropped files:', error);
+    }
+  };
 
   // Add effect to handle post-login reload
   useEffect(() => {
@@ -926,6 +994,60 @@ const UploadImage = () => {
                 </button>
               </div>
 
+              {/* Upload type selector */}
+              <div className="flex justify-center space-x-4 w-full max-w-md mb-4">
+                <button
+                  onClick={() => setUploadType('photos')}
+                  className={`px-4 py-2 rounded-lg ${uploadType === 'photos' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200`}
+                >
+                  Photos
+                </button>
+                <button
+                  onClick={() => setUploadType('folder')}
+                  className={`px-4 py-2 rounded-lg ${uploadType === 'folder' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200`}
+                >
+                  Folder
+                </button>
+              </div>
+
+              {/* Drag and drop zone */}
+              <div
+                className={`w-full max-w-md border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  multiple
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  className="hidden"
+                  {...(uploadType === 'folder' ? { webkitdirectory: '', directory: '' } : {})}
+                />
+                <div className="space-y-4">
+                  <div className="flex justify-center">
+                    <UploadIcon className={`w-12 h-12 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
+                  </div>
+                  <div>
+                    <p className="text-lg font-medium text-gray-700">
+                      {isDragging ? 'Drop your files here' : 'Drag and drop your files here'}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-500">
+                      or
+                    </p>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="mt-2 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      {uploadType === 'folder' ? 'Select Folder' : 'Select Photos'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Authorization status message */}
               {isAuthorized !== null && localStorage.getItem('userEmail') && (
                 <div className={`w-full max-w-md p-3 rounded-lg text-sm ${
@@ -943,7 +1065,7 @@ const UploadImage = () => {
                 </div>
               )}
 
-              <h2 className="text-xl sm:text-2xl font-bold text-black text-center">Upload Images</h2>
+              {/*<h2 className="text-xl sm:text-2xl font-bold text-black text-center">Upload Images</h2>*/}
             </div>
             <div className="space-y-4">
               {/* Only show upload section if authorized */}
@@ -972,6 +1094,7 @@ const UploadImage = () => {
                           id="photo-upload"
                           disabled={!isAuthorized || isUploading}
                         />
+                        {/*
                         <label
                           htmlFor="photo-upload"
                           className={`flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 w-full cursor-pointer ${(!isAuthorized || isUploading) ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -979,6 +1102,7 @@ const UploadImage = () => {
                           <UploadIcon className="w-5 h-5 mr-2" />
                           Upload Photos
                         </label>
+                        */}
                       </div>
 
                       {/* Upload Folder Button */}
@@ -994,6 +1118,7 @@ const UploadImage = () => {
                           directory=""
                           disabled={!isAuthorized || isUploading}
                         />
+                        {/*
                         <label
                           htmlFor="folder-upload"
                           className={`flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-400 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 w-full cursor-pointer ${(!isAuthorized || isUploading) ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -1001,6 +1126,7 @@ const UploadImage = () => {
                           <UploadIcon className="w-5 h-5 mr-2" />
                           Upload Folder
                         </label>
+                        */}
                       </div>
                     </div>
                   </div>
