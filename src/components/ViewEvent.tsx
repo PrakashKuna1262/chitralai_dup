@@ -416,7 +416,7 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                 />
               </div>
               <p className="text-sm text-gray-600 text-center">
-                Scan this QR code to access the event dashboard
+                Scan this QR code to access the event photos
               </p>
             </div>
           </div>
