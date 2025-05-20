@@ -485,3 +485,4 @@ const MyPhotos: React.FC = () => {
 };
 
 export default MyPhotos;
+
