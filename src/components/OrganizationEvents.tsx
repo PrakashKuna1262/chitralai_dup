@@ -31,6 +31,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+  const [processingEventId, setProcessingEventId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -56,6 +57,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
     }
 
     try {
+      setProcessingEventId(event.id);
       setProcessingStatus('Checking for your photos...');
       
       // First, check if we already have matched images for this user and event
@@ -183,6 +185,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       setError(error.message || 'Failed to process photos');
     } finally {
       setProcessingStatus(null);
+      setProcessingEventId(null);
     }
   };
 
@@ -266,12 +269,12 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
                     {/* View Photos Button */}
                     <button
                       onClick={() => handleViewPhotos(event)}
-                      className="w-full mt-1 sm:mt-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center"
-                      disabled={!!processingStatus}
+                      disabled={processingEventId !== null}
+                      className={`w-full mt-1 sm:mt-2 px-3 sm:px-4 py-1.5 sm:py-2 ${processingEventId === event.id ? 'bg-blue-400' : 'bg-blue-600'} text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center`}
                     >
                       <ImageIcon className="w-3 sm:w-4 h-3 sm:h-4 mr-1 sm:mr-2" />
                       <span className="text-xs sm:text-sm font-medium">
-                        {processingStatus ? 'Processing...' : 'View Photos'}
+                        {processingEventId === event.id ? 'Processing...' : 'View Photos'}
                       </span>
                     </button>
                   </div>
