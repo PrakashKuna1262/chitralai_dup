@@ -5,7 +5,7 @@ import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, Sh
 import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getUserEvents, getEventById, updateEventData } from '../config/eventStorage';
-import { API_BASE } from '../config/apiBase';
+
 
 // Add type declaration for directory upload attributes
 declare module 'react' {
