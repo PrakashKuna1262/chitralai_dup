@@ -249,21 +249,21 @@ const MyOrganizations: React.FC = () => {
               <p className="text-sm text-gray-400 mt-1">Enter an organization code above to join one</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {organizations.map((org) => (
                 <div
                   key={org.organizationCode}
                   className="bg-blue-50 rounded-lg overflow-hidden border border-blue-100 hover:shadow-lg transition-all duration-300"
                 >
-                  <div className="aspect-w-16 aspect-h-9 bg-white">
+                  <div className="aspect-w-16 aspect-h-9 bg-white relative h-48">
                     {org.organizationLogo ? (
                       <img 
                         src={org.organizationLogo} 
                         alt={org.organizationName}
-                        className="w-full h-48 object-cover"
+                        className="w-full h-full object-contain absolute inset-0"
                       />
                     ) : (
-                      <div className="w-full h-48 bg-gray-100 flex items-center justify-center">
+                      <div className="w-full h-full bg-gray-100 flex items-center justify-center">
                         <Building2 className="w-12 h-12 text-gray-400" />
                       </div>
                     )}
