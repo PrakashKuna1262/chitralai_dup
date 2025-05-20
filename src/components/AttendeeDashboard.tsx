@@ -1527,7 +1527,7 @@ console.log(`User ${userEmail} downloading image`);
       <p className="text-gray-500 text-sm mt-2">Enter an event code above to find your photos from an event.</p>
     </div>
   ) : (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4">
       {attendedEvents
         .filter(event => event.eventId !== 'default')
         .sort((a, b) => {
@@ -1614,7 +1614,7 @@ console.log(`User ${userEmail} downloading image`);
           </div>
           
           {filteredImages.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
               {filteredImages.map((image) => (
                 <div
                   key={image.imageId}
