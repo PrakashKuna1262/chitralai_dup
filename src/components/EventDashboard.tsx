@@ -1064,19 +1064,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                         </button>
                                     </div>
                                 )}
-                                <div className="mb-2">
-                                    <label className="block text-blue-900 text-xs mb-1" htmlFor="coverImage">
-                                        Cover Image <span className="text-red-500">*</span>
-                                    </label>
-                                    <input
-                                        type="file"
-                                        id="coverImage"
-                                        accept="image/*"
-                                        onChange={handleCoverImageChange}
-                                        className="w-full text-xs text-blue-900 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                                        required
-                                    />
-                                </div>
+                                
                                 <div>
                                     <label className="block text-blue-700 text-xs mb-1" htmlFor="eventName">
                                         Event Name <span className="text-red-500">*</span>
@@ -1103,7 +1091,19 @@ const EventDashboard = (props: EventDashboardProps) => {
                                         required
                                     />
                                 </div>
-
+                                <div className="mb-2">
+                                    <label className="block text-blue-900 text-xs mb-1" htmlFor="coverImage">
+                                        Cover Image <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        type="file"
+                                        id="coverImage"
+                                        accept="image/*"
+                                        onChange={handleCoverImageChange}
+                                        className="w-full text-xs text-blue-900 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                                        required
+                                    />
+                                </div>
                                 <button
                                     type="submit"
                                     disabled={isLoading}
@@ -1292,13 +1292,13 @@ const EventDashboard = (props: EventDashboardProps) => {
                                         <div className="flex justify-end space-x-1.5">
                                             <Link
                                                 to={`/view-event/${event.id}`}
-                                                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-2 py-1 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
+                                                className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-1 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-xs font-medium shadow-sm hover:shadow-md"
                                             >
                                                 View
                                             </Link>
                                             <button
                                                 onClick={() => handleDeleteClick(event.id, event.userEmail)}
-                                                className="bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded-lg hover:bg-red-500 hover:text-white hover:border-red-500 transition-all duration-200 flex items-center text-xs font-medium shadow-sm hover:shadow-md group"
+                                                className="bg-white border border-gray-300 text-gray-700 px-4 py-1 rounded-lg hover:bg-red-500 hover:text-white hover:border-red-500 transition-all duration-200 flex items-center text-xs font-medium shadow-sm hover:shadow-md group"
                                             >
                                                 <Trash2 className="w-3 h-3 mr-1 group-hover:text-white" />
                                                 Delete
