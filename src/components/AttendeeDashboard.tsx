@@ -1244,6 +1244,27 @@ console.log(`User ${userEmail} downloading image`);
     }
   `;
 
+  // Add this CSS at the top of the component, after the fadeInOutStyles
+  const scrollbarStyles = `
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 4px;
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+  `;
+
   // New function to handle sharing image
   const handleShare = async (platform: string, imageUrl: string, e?: React.MouseEvent) => {
     if (e) {
@@ -1361,6 +1382,7 @@ console.log(`User ${userEmail} downloading image`);
   return (
     <div className="min-h-screen bg-gray-50 pt-20 pb-6 px-4 sm:px-6 lg:px-8">
       <style>{fadeInOutStyles}</style>
+      <style>{scrollbarStyles}</style>
       <div className="max-w-7xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Your Event Memories</h1>
@@ -1452,12 +1474,16 @@ console.log(`User ${userEmail} downloading image`);
           {/* Quick Stats Section */}
           <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6 h-full">
             <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-3 sm:mb-4">Your Photo Stats</h2>
-            <div className="space-y-3 sm:space-y-6">
-              <div className="bg-blue-50 rounded-lg p-3 sm:p-4 flex justify-between items-center">
+            <div className="bg-blue-50 rounded-lg p-3 sm:p-4 flex flex-row sm:flex-col items-center justify-between gap-2 sm:gap-4">
+              <div className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-blue-600" />
                 <span className="text-gray-700">Events</span>
                 <span className="text-lg sm:text-xl font-bold text-blue-600">{statistics.totalEvents}</span>
               </div>
-              <div className="bg-blue-50 rounded-lg p-3 sm:p-4 flex justify-between items-center">
+              <div className="h-8 w-px bg-blue-200 sm:hidden"></div>
+              <div className="w-full h-px bg-blue-200 hidden sm:block my-1"></div>
+              <div className="flex items-center gap-2">
+                <ImageIcon className="h-5 w-5 text-blue-600" />
                 <span className="text-gray-700">Photos</span>
                 <span className="text-lg sm:text-xl font-bold text-blue-600">{statistics.totalImages}</span>
               </div>
@@ -1505,63 +1531,6 @@ console.log(`User ${userEmail} downloading image`);
             </div>
           </div>
         </div>
-
-        {/* Attended Events Section */}
-        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6 mb-8">
-  <div className="flex justify-between items-center mb-4">
-    <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Your Event Albums</h2>
-    <select
-      value={eventSortOption}
-      onChange={(e) => setEventSortOption(e.target.value as 'date' | 'name')}
-      className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-    >
-      <option value="date">Latest First</option>
-      <option value="name">Name A-Z</option>
-    </select>
-  </div>
-
-  {attendedEvents.length === 0 ? (
-    <div className="bg-gray-50 rounded-lg p-4 sm:p-6 text-center">
-      <Calendar className="h-10 sm:h-12 w-10 sm:w-12 text-gray-400 mx-auto mb-2" />
-      <p className="text-gray-600">You haven't attended any events yet.</p>
-      <p className="text-gray-500 text-sm mt-2">Enter an event code above to find your photos from an event.</p>
-    </div>
-  ) : (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4">
-      {attendedEvents
-        .filter(event => event.eventId !== 'default')
-        .sort((a, b) => {
-          if (eventSortOption === 'date') {
-            return new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime();
-          } else {
-            return a.eventName.localeCompare(b.eventName);
-          }
-        })
-        .map((event) => (
-          // ... existing event card code ...
-          <div
-            key={event.eventId}
-            className="bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow border border-gray-200 cursor-pointer"
-            onClick={() => handleEventClick(event.eventId)}
-          >
-            <div className="aspect-square relative">
-              <img
-                src={event.thumbnailUrl || event.coverImage}
-                alt={`${event.eventName} thumbnail`}
-                className="object-cover w-full h-full"
-              />
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-                <h3 className="text-white font-semibold truncate">{event.eventName}</h3>
-                <p className="text-white/80 text-sm">
-                  {new Date(event.eventDate).toLocaleDateString()}
-                </p>
-              </div>
-            </div>
-          </div>
-        ))}
-    </div>
-  )}
-</div>
 
         {/* Matching Images Section */}
         <div ref={matchedImagesRef} className="bg-white rounded-lg shadow-sm p-4 sm:p-6 mb-8">
@@ -1614,7 +1583,7 @@ console.log(`User ${userEmail} downloading image`);
           </div>
           
           {filteredImages.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
               {filteredImages.map((image) => (
                 <div
                   key={image.imageId}
@@ -1664,6 +1633,62 @@ console.log(`User ${userEmail} downloading image`);
                   <p className="mt-2 text-sm text-gray-500">Enter an event code above to find your photos</p>
                 </>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Attended Events Section */}
+        <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6 mb-8">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Your Event Albums</h2>
+            <select
+              value={eventSortOption}
+              onChange={(e) => setEventSortOption(e.target.value as 'date' | 'name')}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="date">Latest First</option>
+              <option value="name">Name A-Z</option>
+            </select>
+          </div>
+
+          {attendedEvents.length === 0 ? (
+            <div className="bg-gray-50 rounded-lg p-4 sm:p-6 text-center">
+              <Calendar className="h-10 sm:h-12 w-10 sm:w-12 text-gray-400 mx-auto mb-2" />
+              <p className="text-gray-600">You haven't attended any events yet.</p>
+              <p className="text-gray-500 text-sm mt-2">Enter an event code above to find your photos from an event.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+              {attendedEvents
+                .filter(event => event.eventId !== 'default')
+                .sort((a, b) => {
+                  if (eventSortOption === 'date') {
+                    return new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime();
+                  } else {
+                    return a.eventName.localeCompare(b.eventName);
+                  }
+                })
+                .map((event) => (
+                  <div
+                    key={event.eventId}
+                    className="bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow border border-gray-200 cursor-pointer"
+                    onClick={() => handleEventClick(event.eventId)}
+                  >
+                    <div className="aspect-square relative">
+                      <img
+                        src={event.thumbnailUrl || event.coverImage}
+                        alt={`${event.eventName} thumbnail`}
+                        className="object-cover w-full h-full"
+                      />
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3">
+                        <h3 className="text-white font-semibold truncate">{event.eventName}</h3>
+                        <p className="text-white/80 text-sm">
+                          {new Date(event.eventDate).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
             </div>
           )}
         </div>
