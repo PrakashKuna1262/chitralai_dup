@@ -4,7 +4,7 @@ import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, ShieldAlert } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getUserEvents, getEventById, updateEventData } from '../config/eventStorage';
+import { getUserEvents, getEventById, updateEventData, convertToAppropriateUnit, addSizes, formatSize } from '../config/eventStorage';
 
 
 // Add type declaration for directory upload attributes
@@ -94,7 +94,7 @@ const pollForCompressedImage = async (bucketUrl: string, compressedKey: string, 
 
 // Add this helper function for getting a pre-signed URL
 const getPresignedUrl = async (key: string, contentType: string): Promise<string> => {
-  const response = await fetch(`${API_BASE}/api/presign`, {
+  const response = await fetch('/api/presign', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, contentType })
@@ -755,6 +755,12 @@ const UploadImage = () => {
     setUploadProgress({ current: 0, total: totalCount });
 
     try {
+      // Calculate total size of images being uploaded in bytes
+      const totalUploadSizeBytes = images.reduce((sum, file) => sum + file.size, 0);
+      
+      // Convert to appropriate unit (MB or GB)
+      const { size: totalUploadSize, unit: totalUploadUnit } = convertToAppropriateUnit(totalUploadSizeBytes);
+      
       // Process all files using the optimized upload queue
       const results = await uploadToS3WithRetryQueue(images);
       
@@ -765,12 +771,22 @@ const UploadImage = () => {
           try {
             const currentEvent = await getEventById(selectedEvent);
             if (currentEvent) {
+              // Add the new size to the existing size
+              const { size: newTotalSize, unit: newTotalUnit } = addSizes(
+                currentEvent.totalImageSize || 0,
+                currentEvent.totalImageSizeUnit || 'MB',
+                totalUploadSize,
+                totalUploadUnit
+              );
+
               await updateEventData(selectedEvent, userEmail, {
-                photoCount: (currentEvent.photoCount || 0) + results.length
+                photoCount: (currentEvent.photoCount || 0) + results.length,
+                totalImageSize: newTotalSize,
+                totalImageSizeUnit: newTotalUnit
               });
             }
           } catch (error) {
-            console.error('Error updating photoCount:', error);
+            console.error('Error updating event data:', error);
           }
         }
         
@@ -783,17 +799,16 @@ const UploadImage = () => {
         // Show success message with upload stats
         const uploadTimeInSeconds = (Date.now() - uploadStartTime) / 1000;
         const uploadSpeedMBps = (totalSize / (1024 * 1024)) / uploadTimeInSeconds;
-        console.log(`Upload completed: ${results.length} files, ${formatFileSize(totalSize)} in ${uploadTimeInSeconds.toFixed(1)}s (${uploadSpeedMBps.toFixed(2)} MB/s)`);
+        console.log(`Upload completed: ${results.length} files, ${formatSize(totalUploadSize, totalUploadUnit)} in ${uploadTimeInSeconds.toFixed(1)}s (${uploadSpeedMBps.toFixed(2)} MB/s)`);
       }
 
       setImages([]);
       setTotalSize(0);
     } catch (error) {
-      console.error('Upload process failed:', error);
-      alert('Failed to complete the upload process. Please try again.');
+      console.error('Error during upload:', error);
+      alert('An error occurred during upload. Please try again.');
     } finally {
       setIsUploading(false);
-      setUploadProgress(null);
     }
   }, [images, selectedEvent, totalSize]);
 

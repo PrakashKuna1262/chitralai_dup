@@ -6,42 +6,115 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 
 const app = express();
-app.use(express.json());
-app.use(cors());
 
-const s3 = new AWS.S3({
-  region: process.env.VITE_AWS_REGION,
-  accessKeyId: process.env.VITE_AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.VITE_AWS_SECRET_ACCESS_KEY
+// Add request logging middleware
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
 });
 
-const BUCKET = process.env.VITE_S3_BUCKET_NAME;
+// Configure CORS
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://chitra.netlify.app'
+  ],
+  credentials: true
+}));
+
+app.use(express.json());
+
+// Environment variables with fallbacks for local development
+const AWS_REGION = process.env.VITE_AWS_REGION || 'ap-south-1';
+const S3_BUCKET = process.env.VITE_S3_BUCKET_NAME || 'chitral-ai';
+const AWS_ACCESS_KEY = process.env.VITE_AWS_ACCESS_KEY_ID;
+const AWS_SECRET_KEY = process.env.VITE_AWS_SECRET_ACCESS_KEY;
+const GOOGLE_CLIENT_ID = process.env.VITE_GOOGLE_CLIENT_ID;
+
+// Log environment variables (without sensitive data)
+console.log('Environment variables loaded:');
+console.log('- AWS_REGION:', AWS_REGION);
+console.log('- S3_BUCKET:', S3_BUCKET);
+console.log('- AWS_ACCESS_KEY:', AWS_ACCESS_KEY ? 'Set' : 'Not set');
+console.log('- AWS_SECRET_KEY:', AWS_SECRET_KEY ? 'Set' : 'Not set');
+console.log('- GOOGLE_CLIENT_ID:', GOOGLE_CLIENT_ID ? 'Set' : 'Not set');
+
+// Validate required environment variables
+const requiredEnvVars = {
+  VITE_AWS_REGION: AWS_REGION,
+  VITE_S3_BUCKET_NAME: S3_BUCKET,
+  VITE_AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY,
+  VITE_AWS_SECRET_ACCESS_KEY: AWS_SECRET_KEY,
+  VITE_GOOGLE_CLIENT_ID: GOOGLE_CLIENT_ID
+};
+
+const missingEnvVars = Object.entries(requiredEnvVars)
+  .filter(([_, value]) => !value)
+  .map(([key]) => key);
+
+if (missingEnvVars.length > 0) {
+  console.error('Missing required environment variables:', missingEnvVars.join(', '));
+  process.exit(1);
+}
+
+const s3 = new AWS.S3({
+  region: AWS_REGION,
+  accessKeyId: AWS_ACCESS_KEY,
+  secretAccessKey: AWS_SECRET_KEY
+});
 
 const dynamoDBClient = new DynamoDBClient({
-  region: process.env.VITE_AWS_REGION,
+  region: AWS_REGION,
   credentials: {
-    accessKeyId: process.env.VITE_AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.VITE_AWS_SECRET_ACCESS_KEY,
+    accessKeyId: AWS_ACCESS_KEY,
+    secretAccessKey: AWS_SECRET_KEY,
   },
 });
 const docClient = DynamoDBDocumentClient.from(dynamoDBClient);
 const USERS_TABLE = 'Users';
 
-app.get('/api/runtime-env', (req, res) => {
+// Add a health check endpoint
+app.get('/health', (req, res) => {
+  console.log('[DEBUG] Health check endpoint called');
+  res.json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Add a root endpoint for testing
+app.get('/', (req, res) => {
+  console.log('[DEBUG] Root endpoint called');
+  res.json({ 
+    message: 'Presign server is running',
+    endpoints: [
+      '/health',
+      '/runtime-env',
+      '/google-client-id'
+    ]
+  });
+});
+
+// Update the runtime-env endpoint
+app.get('/runtime-env', (req, res) => {
+  console.log('[DEBUG] Runtime env endpoint called');
   const runtimeVariables = {
-    VITE_AWS_REGION: process.env.VITE_AWS_REGION,
-    VITE_S3_BUCKET_NAME: process.env.VITE_S3_BUCKET_NAME,
-    VITE_AWS_ACCESS_KEY_ID: process.env.VITE_AWS_ACCESS_KEY_ID,
-    VITE_AWS_SECRET_ACCESS_KEY: process.env.VITE_AWS_SECRET_ACCESS_KEY,
-    // IMPORTANT: Add other NON-SENSITIVE environment variables here.
-    // DO NOT add sensitive keys like AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY.
+    VITE_AWS_REGION: AWS_REGION,
+    VITE_S3_BUCKET_NAME: S3_BUCKET,
+    VITE_AWS_ACCESS_KEY_ID: AWS_ACCESS_KEY,
+    VITE_AWS_SECRET_ACCESS_KEY: AWS_SECRET_KEY,
+    VITE_GOOGLE_CLIENT_ID: GOOGLE_CLIENT_ID
   };
-  // Log to backend console for debugging
-  console.log('[presign-server.js] /api/runtime-env preparing to send:');
-  console.log('[presign-server.js] Region:', runtimeVariables.VITE_AWS_REGION);
-  console.log('[presign-server.js] Bucket:', runtimeVariables.VITE_S3_BUCKET_NAME);
-  console.log('[presign-server.js] Access Key ID (first 5 chars):', runtimeVariables.VITE_AWS_ACCESS_KEY_ID ? runtimeVariables.VITE_AWS_ACCESS_KEY_ID.substring(0,5) : 'MISSING');
-  console.log('[presign-server.js] Secret Key provided:', runtimeVariables.VITE_AWS_SECRET_ACCESS_KEY ? 'Yes' : 'No_MISSING');
+  
+  console.log('[DEBUG] Runtime env variables:', {
+    region: runtimeVariables.VITE_AWS_REGION,
+    bucket: runtimeVariables.VITE_S3_BUCKET_NAME,
+    hasAccessKey: !!runtimeVariables.VITE_AWS_ACCESS_KEY_ID,
+    hasSecretKey: !!runtimeVariables.VITE_AWS_SECRET_ACCESS_KEY,
+    hasGoogleClientId: !!runtimeVariables.VITE_GOOGLE_CLIENT_ID
+  });
 
   res.json(runtimeVariables);
 });
@@ -126,7 +199,7 @@ app.post('/api/presign', async (req, res) => {
   }
   try {
     const url = await s3.getSignedUrlPromise('putObject', {
-      Bucket: BUCKET,
+      Bucket: S3_BUCKET,
       Key: key,
       ContentType: contentType,
       Expires: 600
@@ -179,11 +252,37 @@ app.get('/api/organizations/by-code/:organizationCode', async (req, res) => {
   }
 });
 
-app.get('/api/google-client-id', (req, res) => {
-  res.json({ clientId: process.env.VITE_GOOGLE_CLIENT_ID });
+// Update the google-client-id endpoint
+app.get('/google-client-id', (req, res) => {
+  console.log('[DEBUG] Google client ID endpoint called');
+  console.log('[DEBUG] Google client ID available:', !!GOOGLE_CLIENT_ID);
+  
+  if (!GOOGLE_CLIENT_ID) {
+    console.error('[DEBUG] Google client ID is not set');
+    return res.status(500).json({ error: 'Google Client ID not configured' });
+  }
+  
+  res.json({ clientId: GOOGLE_CLIENT_ID });
 });
 
-const PORT = 3001;
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', err);
+  res.status(500).json({ error: 'Internal server error', message: err.message });
+});
+
+// 404 handler
+app.use((req, res) => {
+  console.log('[DEBUG] 404 Not Found:', req.method, req.url);
+  res.status(404).json({ error: 'Not Found', path: req.url });
+});
+
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Presign backend running on http://localhost:${PORT}`);
+  console.log('Environment:', process.env.NODE_ENV || 'development');
+  console.log('Available endpoints:');
+  console.log('  - GET /health');
+  console.log('  - GET /runtime-env');
+  console.log('  - GET /google-client-id');
 });

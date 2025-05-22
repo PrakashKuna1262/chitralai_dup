@@ -4,7 +4,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, rekognitionClientPromise, validateEnvVariables } from '../config/aws';
 import { DetectFacesCommand, CompareFacesCommand } from '@aws-sdk/client-rekognition';
 import { Download, Trash2, Camera } from 'lucide-react';
-import { getEventById, updateEventData } from '../config/eventStorage';
+import { getEventById, updateEventData, convertToAppropriateUnit, subtractSizes } from '../config/eventStorage';
 import ProgressiveImage from './ProgressiveImage';
 
 interface EventImagesProps {
@@ -97,6 +97,20 @@ const EventImages = ({ eventId }: EventImagesProps) => {
     try {
       setDeleting(prev => [...prev, image.key]);
       const { bucketName } = await validateEnvVariables();
+      
+      // Get the image size before deleting
+      const getObjectCommand = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: image.key
+      });
+      
+      const objectData = await (await s3ClientPromise).send(getObjectCommand);
+      const imageSizeBytes = objectData.ContentLength || 0;
+      
+      // Convert to appropriate unit (MB or GB)
+      const { size: imageSize, unit: imageUnit } = convertToAppropriateUnit(imageSizeBytes);
+      
+      // Delete the image
       const deleteCommand = new DeleteObjectCommand({
         Bucket: bucketName,
         Key: image.key
@@ -104,13 +118,23 @@ const EventImages = ({ eventId }: EventImagesProps) => {
       await (await s3ClientPromise).send(deleteCommand);
       setImages(prev => prev.filter(img => img.key !== image.key));
       
-      // Also update the photoCount in DynamoDB (decrement by 1)
+      // Update the event data in DynamoDB
       const userEmail = localStorage.getItem('userEmail');
       if (userEmail) {
         const currentEvent = await getEventById(eventId);
-        if (currentEvent && currentEvent.photoCount > 0) {
+        if (currentEvent) {
+          // Subtract the deleted image size from the total
+          const { size: newTotalSize, unit: newTotalUnit } = subtractSizes(
+            currentEvent.totalImageSize || 0,
+            currentEvent.totalImageSizeUnit || 'MB',
+            imageSize,
+            imageUnit
+          );
+
           await updateEventData(eventId, userEmail, {
-            photoCount: currentEvent.photoCount - 1
+            photoCount: Math.max(0, (currentEvent.photoCount || 0) - 1),
+            totalImageSize: newTotalSize,
+            totalImageSizeUnit: newTotalUnit
           });
         }
       }

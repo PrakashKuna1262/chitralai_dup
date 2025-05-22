@@ -23,18 +23,30 @@ export const GoogleAuthConfig: React.FC<{ children: React.ReactNode }> = ({ chil
   useEffect(() => {
     console.debug('[DEBUG] GoogleAuthConfig.tsx: Fetching Google OAuth Client ID from /api/google-client-id');
     fetch('/api/google-client-id')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
       .then(data => {
         if (data.clientId) {
           console.debug('[DEBUG] GoogleAuthConfig.tsx: Google OAuth Client ID fetched. First 5 chars:', data.clientId.substring(0, 5));
+          setClientId(data.clientId);
         } else {
           console.warn('[DEBUG] GoogleAuthConfig.tsx: Google OAuth Client ID not found in response.');
+          setClientId(null);
         }
-        setClientId(data.clientId);
       })
       .catch((err) => {
         console.error('[DEBUG] GoogleAuthConfig.tsx: Failed to fetch Google OAuth Client ID:', err);
-        setClientId(null);
+        // In development, try to use the environment variable as fallback
+        if (import.meta.env.DEV && import.meta.env.VITE_GOOGLE_CLIENT_ID) {
+          console.debug('[DEBUG] GoogleAuthConfig.tsx: Using fallback client ID from environment variable');
+          setClientId(import.meta.env.VITE_GOOGLE_CLIENT_ID);
+        } else {
+          setClientId(null);
+        }
       });
   }, []);
 

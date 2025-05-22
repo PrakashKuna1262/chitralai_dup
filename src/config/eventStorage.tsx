@@ -32,7 +32,63 @@ export interface EventData {
   emailAccess?: string[]; // List of email addresses that can access the event
   organizationCode?: string; // Organization code of the event creator
   anyoneCanUpload?: boolean; // Whether anyone can upload photos to this event
+  totalImageSize?: number; // Total size in MB or GB
+  totalImageSizeUnit?: 'MB' | 'GB'; // Unit of measurement for totalImageSize
 }
+
+// Helper function to convert bytes to MB
+export const bytesToMB = (bytes: number): number => {
+  return Number((bytes / (1024 * 1024)).toFixed(2));
+};
+
+// Helper function to convert bytes to GB
+export const bytesToGB = (bytes: number): number => {
+  return Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
+};
+
+// Helper function to determine appropriate unit and convert size
+export const convertToAppropriateUnit = (bytes: number): { size: number; unit: 'MB' | 'GB' } => {
+  const mb = bytesToMB(bytes);
+  if (mb >= 1024) {
+    return { size: bytesToGB(bytes), unit: 'GB' };
+  }
+  return { size: mb, unit: 'MB' };
+};
+
+// Helper function to format size for display
+export const formatSize = (size: number, unit: 'MB' | 'GB'): string => {
+  return `${size} ${unit}`;
+};
+
+// Helper function to convert between units
+export const convertBetweenUnits = (size: number, fromUnit: 'MB' | 'GB', toUnit: 'MB' | 'GB'): number => {
+  if (fromUnit === toUnit) return size;
+  if (fromUnit === 'MB' && toUnit === 'GB') return Number((size / 1024).toFixed(2));
+  if (fromUnit === 'GB' && toUnit === 'MB') return Number((size * 1024).toFixed(2));
+  return size;
+};
+
+// Helper function to add sizes with different units
+export const addSizes = (size1: number, unit1: 'MB' | 'GB', size2: number, unit2: 'MB' | 'GB'): { size: number; unit: 'MB' | 'GB' } => {
+  // Convert both to MB for addition
+  const size1InMB = unit1 === 'GB' ? size1 * 1024 : size1;
+  const size2InMB = unit2 === 'GB' ? size2 * 1024 : size2;
+  const totalMB = size1InMB + size2InMB;
+  
+  // Convert back to appropriate unit
+  return convertToAppropriateUnit(totalMB * 1024 * 1024);
+};
+
+// Helper function to subtract sizes with different units
+export const subtractSizes = (size1: number, unit1: 'MB' | 'GB', size2: number, unit2: 'MB' | 'GB'): { size: number; unit: 'MB' | 'GB' } => {
+  // Convert both to MB for subtraction
+  const size1InMB = unit1 === 'GB' ? size1 * 1024 : size1;
+  const size2InMB = unit2 === 'GB' ? size2 * 1024 : size2;
+  const totalMB = Math.max(0, size1InMB - size2InMB);
+  
+  // Convert back to appropriate unit
+  return convertToAppropriateUnit(totalMB * 1024 * 1024);
+};
 
 // Store event data in DynamoDB
 export const storeEventData = async (eventData: Omit<EventData, 'createdAt' | 'updatedAt'>): Promise<boolean> => {
@@ -71,7 +127,9 @@ export const storeEventData = async (eventData: Omit<EventData, 'createdAt' | 'u
       eventUrl: eventData.eventUrl || '',
       emailAccess: eventData.emailAccess || [],
       organizationCode: organizationCode || null, // Add organization code
-      anyoneCanUpload: eventData.anyoneCanUpload || false // Add anyoneCanUpload
+      anyoneCanUpload: eventData.anyoneCanUpload || false, // Add anyoneCanUpload
+      totalImageSize: eventData.totalImageSize || 0, // Add totalImageSize
+      totalImageSizeUnit: eventData.totalImageSizeUnit || 'MB' // Add totalImageSizeUnit
     };
 
     // Log the item being stored (helpful for debugging)
@@ -316,11 +374,15 @@ export const getEventStatistics = async (userEmail: string) => {
       }
     });
     
+    const totalImageSize = allEvents.reduce((sum, event) => sum + (event.totalImageSize || 0), 0);
+    
     return {
       eventCount: allEvents.length,
       photoCount: allEvents.reduce((sum, event) => sum + (event.photoCount || 0), 0),
       videoCount: allEvents.reduce((sum, event) => sum + (event.videoCount || 0), 0),
-      guestCount: allEvents.reduce((sum, event) => sum + (event.guestCount || 0), 0)
+      guestCount: allEvents.reduce((sum, event) => sum + (event.guestCount || 0), 0),
+      totalImageSize: totalImageSize,
+      formattedTotalSize: formatSize(totalImageSize, allEvents[0].totalImageSizeUnit || 'MB')
     };
   } catch (error) {
     console.error("Error getting event statistics from DynamoDB:", error);
@@ -328,7 +390,9 @@ export const getEventStatistics = async (userEmail: string) => {
       eventCount: 0,
       photoCount: 0,
       videoCount: 0,
-      guestCount: 0
+      guestCount: 0,
+      totalImageSize: 0,
+      formattedTotalSize: '0 MB'
     };
   }
 };
