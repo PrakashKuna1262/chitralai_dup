@@ -121,8 +121,9 @@ const EventDashboard = (props: EventDashboardProps) => {
     const [showQRCode, setShowQRCode] = useState(false);
 
     // Add these states near the top of the EventDashboard component
-    const [editMode, setEditMode] = useState<{eventId: string; type: 'name' | 'coverImage'} | null>(null);
+    const [editMode, setEditMode] = useState<{eventId: string; type: 'name' | 'date' | 'coverImage'} | null>(null);
     const [editedName, setEditedName] = useState('');
+    const [editedDate, setEditedDate] = useState('');
 
     // Add this to the EventDashboard component near other state declarations
     const [imageOrientations, setImageOrientations] = useState<Record<string, 'landscape' | 'portrait' | 'unknown'>>({});
@@ -670,7 +671,7 @@ const EventDashboard = (props: EventDashboardProps) => {
     };
 
     // Add this function in the EventDashboard component
-    const handleUpdateEvent = async (eventId: string, updates: {name?: string; coverImage?: string}) => {
+    const handleUpdateEvent = async (eventId: string, updates: {name?: string; coverImage?: string; date?: string}) => {
         try {
             const { bucketName } = await validateEnvVariables();
             const userEmail = localStorage.getItem('userEmail');
@@ -711,6 +712,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                 ...existingEvent,
                 ...(updates.name && { name: updates.name }),
                 ...(coverImageUrl && { coverImage: coverImageUrl }),
+                ...(updates.date && { date: updates.date }),
                 updatedAt: new Date().toISOString()
             };
 
@@ -721,6 +723,7 @@ const EventDashboard = (props: EventDashboardProps) => {
             await loadEvents();
             setEditMode(null);
             setEditedName('');
+            setEditedDate('');
 
         } catch (error) {
             console.error('Error updating event:', error);
@@ -1278,9 +1281,47 @@ const EventDashboard = (props: EventDashboardProps) => {
                                             </div>
                                         </div>
                                         <div className="flex items-center justify-between mb-1.5">
-                                            <p className="text-xs text-gray-600">
-                                                <span className="font-medium">Date:</span> {new Date(event.date).toLocaleDateString()}
-                                            </p>
+                                            {editMode?.eventId === event.id && editMode.type === 'date' ? (
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="date"
+                                                        value={editedDate}
+                                                        onChange={(e) => setEditedDate(e.target.value)}
+                                                        className="text-xs border border-blue-300 rounded px-1 py-0.5 focus:outline-none focus:border-blue-500"
+                                                        autoFocus
+                                                    />
+                                                    <button
+                                                        onClick={() => handleUpdateEvent(event.id, { date: editedDate })}
+                                                        className="text-green-600 hover:text-green-700 p-0.5 hover:bg-green-50 rounded-full"
+                                                    >
+                                                        <CheckCircle className="w-3 h-3" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setEditMode(null)}
+                                                        className="text-red-600 hover:text-red-700 p-0.5 hover:bg-red-50 rounded-full"
+                                                    >
+                                                        <X className="w-3 h-3" />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-1">
+                                                    <p className="text-xs text-gray-600">
+                                                        <span className="font-medium">Date:</span> {new Date(event.date).toLocaleDateString()}
+                                                    </p>
+                                                    <button
+                                                        onClick={() => {
+                                                            setEditMode({ eventId: event.id, type: 'date' });
+                                                            // Format date as YYYY-MM-DD for date input
+                                                            const date = new Date(event.date);
+                                                            const formattedDate = date.toISOString().split('T')[0];
+                                                            setEditedDate(formattedDate);
+                                                        }}
+                                                        className="p-0.5 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50"
+                                                    >
+                                                        <Edit className="w-3 h-3" />
+                                                    </button>
+                                                </div>
+                                            )}
                                             <div className="flex items-center gap-1 text-xs text-blue-600">
                                                 <Image className="w-3 h-3" />
                                                 <span>{event.photoCount || 0} photos</span>
@@ -1316,4 +1357,3 @@ const EventDashboard = (props: EventDashboardProps) => {
 };
 
 export default EventDashboard;
-
