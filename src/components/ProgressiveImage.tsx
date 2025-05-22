@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface ProgressiveImageProps {
   compressedSrc: string;
@@ -16,43 +16,75 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
   style = {},
 }) => {
   const [highResLoaded, setHighResLoaded] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const imageRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+            observer.disconnect(); // Stop observing once visible
+          }
+        });
+      },
+      {
+        rootMargin: '50px 0px',
+        threshold: 0.1
+      }
+    );
+
+    if (imageRef.current) {
+      observer.observe(imageRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <span style={{ position: 'relative', display: 'inline-block', ...style }}>
-      <img
-        src={compressedSrc}
-        alt={alt}
-        className={className}
-        style={{
-          filter: highResLoaded ? 'blur(0px)' : 'blur(8px)',
-          transition: 'filter 0.3s',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-        }}
-        loading="lazy"
-        draggable={false}
-      />
-      <img
-        src={originalSrc}
-        alt={alt}
-        className={className}
-        style={{
-          opacity: highResLoaded ? 1 : 0,
-          transition: 'opacity 0.3s',
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          position: 'relative',
-          zIndex: 1,
-        }}
-        loading="lazy"
-        onLoad={() => setHighResLoaded(true)}
-        draggable={false}
-      />
+    <span 
+      ref={imageRef}
+      style={{ position: 'relative', display: 'inline-block', ...style }}
+    >
+      {isVisible && (
+        <>
+          <img
+            src={compressedSrc}
+            alt={alt}
+            className={className}
+            style={{
+              filter: highResLoaded ? 'blur(0px)' : 'blur(8px)',
+              transition: 'filter 0.3s',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+            }}
+            loading="lazy"
+            draggable={false}
+          />
+          <img
+            src={originalSrc}
+            alt={alt}
+            className={className}
+            style={{
+              opacity: highResLoaded ? 1 : 0,
+              transition: 'opacity 0.3s',
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              position: 'relative',
+              zIndex: 1,
+            }}
+            loading="lazy"
+            onLoad={() => setHighResLoaded(true)}
+            draggable={false}
+          />
+        </>
+      )}
     </span>
   );
 };

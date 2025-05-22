@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, rekognitionClientPromise, validateEnvVariables } from '../config/aws';
@@ -34,10 +34,13 @@ const EventImages = ({ eventId }: EventImagesProps) => {
   const IMAGES_PER_PAGE = 300;
   const [bucketName, setBucketName] = useState<string | undefined>();
 
+  // Modify fetchEventImages to include preloading
   const fetchEventImages = async (pageNum = 1) => {
     try {
       setLoading(true);
       const { bucketName } = await validateEnvVariables();
+      setBucketName(bucketName);
+      
       const listCommand = new ListObjectsV2Command({
         Bucket: bucketName,
         Prefix: `events/shared/${eventId}/images/`,
@@ -60,6 +63,7 @@ const EventImages = ({ eventId }: EventImagesProps) => {
         }));
   
       setImages(prev => pageNum === 1 ? imageItems : [...prev, ...imageItems]);
+      
       setHasMore(imageItems.length === IMAGES_PER_PAGE);
       setProcessingStatus('');
     } catch (error) {
@@ -287,34 +291,36 @@ const EventImages = ({ eventId }: EventImagesProps) => {
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
         {images.map((image, index) => (
           <div key={image.key} className="relative group">
-            <ProgressiveImage
-              compressedSrc={`https://${bucketName}.s3.amazonaws.com/compressed/${eventId}/${image.key.split('/').pop()}`}
-              originalSrc={image.url}
-              alt={`Event photo ${index + 1}`}
-              className="w-full h-32 sm:h-48 object-cover rounded-lg shadow-md transition-transform duration-200 group-hover:scale-[1.02]"
-            />
-            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-opacity duration-200 rounded-lg flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
-              <button
-                onClick={() => handleDownload(image)}
-                className="p-2 bg-white rounded-full shadow-lg hover:bg-gray-100 transition-colors duration-200"
-                title="Download image"
-              >
-                <Download className="w-4 h-4 text-gray-700" />
-              </button>
-              <button
-                onClick={() => handleDelete(image)}
-                className="p-2 bg-white rounded-full shadow-lg hover:bg-gray-100 transition-colors duration-200"
-                disabled={deleting.includes(image.key)}
-                title="Delete image"
-              >
-                <Trash2 className="w-4 h-4 text-blue-500" />
-              </button>
-            </div>
-            {deleting.includes(image.key) && (
-              <div className="absolute inset-0 bg-black bg-opacity-50 rounded-lg flex items-center justify-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
+            <div className="aspect-square relative">
+              <ProgressiveImage
+                compressedSrc={image.url}
+                originalSrc={image.url}
+                alt={`Event photo ${index + 1}`}
+                className="w-full h-full object-cover rounded-lg shadow-md"
+              />
+              <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-opacity duration-200 rounded-lg flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                <button
+                  onClick={() => handleDownload(image)}
+                  className="p-2 bg-white rounded-full shadow-lg hover:bg-gray-100 transition-colors duration-200"
+                  title="Download image"
+                >
+                  <Download className="w-4 h-4 text-gray-700" />
+                </button>
+                <button
+                  onClick={() => handleDelete(image)}
+                  className="p-2 bg-white rounded-full shadow-lg hover:bg-gray-100 transition-colors duration-200"
+                  disabled={deleting.includes(image.key)}
+                  title="Delete image"
+                >
+                  <Trash2 className="w-4 h-4 text-blue-500" />
+                </button>
               </div>
-            )}
+              {deleting.includes(image.key) && (
+                <div className="absolute inset-0 bg-black bg-opacity-50 rounded-lg flex items-center justify-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
+                </div>
+              )}
+            </div>
           </div>
         ))}
       </div>

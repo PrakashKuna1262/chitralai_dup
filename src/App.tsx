@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams, Navigate } from 'react-router-dom';
+import { GoogleAuthConfig } from './config/GoogleAuthConfig';
 
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
@@ -112,41 +113,43 @@ const App = () => {
   }, [userEmail]);
 
   return (
-    <UserContext.Provider value={{ userEmail, userRole, setUserEmail, setUserRole }}>
-      <Router>
-      {showSignInModal && <Login />}
-        <div className="min-h-screen bg-white">
-          {showNavbar && (
-            <Navbar
-              mobileMenuOpen={mobileMenuOpen}
-              setMobileMenuOpen={setMobileMenuOpen}
-              showSignInModal={showSignInModal}
-              setShowSignInModal={setShowSignInModal}
-            />
-          )}
-          <Routes>
-            <Route path="/" element={
-              <div className="animate-slideIn">
-                <Hero onShowSignIn={() => setShowSignInModal(true)} />
-                <HowItWorks />
-                <FAQ />
-              </div>
-            } />
-            <Route path="/events" element={<div className="animate-slideIn"><EventDashboard setShowNavbar={setShowNavbar} /></div>} />
-            <Route path="/event/:eventId" element={<div className="animate-slideIn"><EventDetail eventId={useParams().eventId || ''} /></div>} />
-            <Route path="/attendee-dashboard" element={<div className="animate-slideIn"><AttendeeDashboard setShowSignInModal={setShowSignInModal} /></div>} />
-            <Route path="/event-photos/:eventId" element={<div className="animate-slideIn"><EventPhotos /></div>} />
-            <Route path="/my-photos" element={<div className="animate-slideIn"><MyPhotos /></div>} />
-            <Route path="/upload" element={<div className="animate-slideIn"><UploadImage /></div>} />
-            <Route path="/upload-image" element={<div className="animate-slideIn"><UploadImage /></div>} />
-            
-            <Route path="/view-event/:eventId" element={<div className="animate-slideIn"><ViewEventWrapper /></div>} />
-            <Route path="/my-organizations" element={<MyOrganizations />} />
-          </Routes>
-          <Footer />
-        </div>
-      </Router>
-    </UserContext.Provider>
+    <GoogleAuthConfig>
+      <UserContext.Provider value={{ userEmail, userRole, setUserEmail, setUserRole }}>
+        <Router>
+          {showSignInModal && <Login />}
+          <div className="min-h-screen bg-white">
+            {showNavbar && (
+              <Navbar
+                mobileMenuOpen={mobileMenuOpen}
+                setMobileMenuOpen={setMobileMenuOpen}
+                showSignInModal={showSignInModal}
+                setShowSignInModal={setShowSignInModal}
+              />
+            )}
+            <Routes>
+              <Route path="/" element={
+                <div className="animate-slideIn">
+                  <Hero onShowSignIn={() => setShowSignInModal(true)} />
+                  <HowItWorks />
+                  <FAQ />
+                </div>
+              } />
+              <Route path="/events" element={<div className="animate-slideIn"><EventDashboard setShowNavbar={setShowNavbar} /></div>} />
+              <Route path="/event/:eventId" element={<div className="animate-slideIn"><EventDetail eventId={useParams().eventId || ''} /></div>} />
+              <Route path="/attendee-dashboard" element={<div className="animate-slideIn"><AttendeeDashboard setShowSignInModal={setShowSignInModal} /></div>} />
+              <Route path="/event-photos/:eventId" element={<div className="animate-slideIn"><EventPhotos /></div>} />
+              <Route path="/my-photos" element={<div className="animate-slideIn"><MyPhotos /></div>} />
+              <Route path="/upload" element={<div className="animate-slideIn"><UploadImage /></div>} />
+              <Route path="/upload-image" element={<div className="animate-slideIn"><UploadImage /></div>} />
+              
+              <Route path="/view-event/:eventId" element={<div className="animate-slideIn"><ViewEventWrapper /></div>} />
+              <Route path="/my-organizations" element={<MyOrganizations />} />
+            </Routes>
+            <Footer />
+          </div>
+        </Router>
+      </UserContext.Provider>
+    </GoogleAuthConfig>
   );
 };
 
