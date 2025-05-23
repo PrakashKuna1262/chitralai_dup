@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 
-import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube } from 'lucide-react';
+import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
 import { Link, useNavigate } from 'react-router-dom';
 import { getEventById, updateEventData } from '../config/eventStorage';
+import ProgressiveImage from './ProgressiveImage';
 
 interface ViewEventProps {
   eventId: string;
@@ -117,6 +118,9 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
   const [isEventCreator, setIsEventCreator] = useState(false);
   const [anyoneCanUpload, setAnyoneCanUpload] = useState(false);
   const [eventName, setEventName] = useState<string>('');
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const qrCodeRef = useRef<SVGSVGElement>(null);
 
@@ -184,7 +188,6 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
       const eventToUse = selectedEvent || eventId;
       const prefixes = [`events/shared/${eventToUse}/images`];
       let allImages: EventImage[] = [];
-      let fetchError: any = null;
 
       for (const prefix of prefixes) {
         try {
@@ -204,7 +207,6 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
             allImages = [...allImages, ...imageItems];
           }
         } catch (error) {
-          fetchError = error;
           console.error(`Error fetching from path ${prefix}:`, error);
           continue;
         }
@@ -215,8 +217,6 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
         setImages(deduplicatedImages);
         setError(null);
         setLoading(false);
-      } else if (fetchError) {
-        throw fetchError;
       } else {
         setError('No images found for this event.');
         setLoading(false);
@@ -332,6 +332,51 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     } catch (error) {
       console.error('Error updating anyone can upload setting:', error);
       alert('Failed to update upload settings');
+    }
+  };
+
+  // Handler for toggling selection
+  const toggleSelectImage = (key: string) => {
+    setSelectedForDelete(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(key)) {
+        newSet.delete(key);
+      } else {
+        newSet.add(key);
+      }
+      return newSet;
+    });
+  };
+
+  // Handler for deleting selected images
+  const handleDeleteSelected = async () => {
+    if (selectedForDelete.size === 0) return;
+    if (!window.confirm('Delete selected images? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      const { bucketName } = await validateEnvVariables();
+      const s3Client = await s3ClientPromise;
+      for (const key of selectedForDelete) {
+        const deleteCommand = new DeleteObjectCommand({ Bucket: bucketName, Key: key });
+        await s3Client.send(deleteCommand);
+      }
+      // Update event's photoCount in DynamoDB
+      const userEmail = localStorage.getItem('userEmail');
+      if (userEmail) {
+        const currentEvent = await getEventById(eventId);
+        if (currentEvent) {
+          await updateEventData(eventId, userEmail, {
+            photoCount: Math.max(0, (currentEvent.photoCount || 0) - selectedForDelete.size)
+          });
+        }
+      }
+      setImages(prev => prev.filter(img => !selectedForDelete.has(img.key)));
+      setSelectedForDelete(new Set());
+      setDeleteMode(false);
+    } catch (err) {
+      alert('Failed to delete images. Please try again.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -501,36 +546,99 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
         )}
 
         <div className="space-y-8">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 relative">
             <h2 className="text-2xl font-bold text-gray-900-mt-1">Event Photos</h2>
-            <div className="flex space-x-2"></div>
+            {/* Floating trashcan icon for delete mode */}
+            {!deleteMode && (
+              <button
+                className="absolute right-0 top-1 p-2 rounded-full bg-red-100 hover:bg-red-200 text-red-600 shadow transition"
+                title="Delete images"
+                onClick={() => setDeleteMode(true)}
+              >
+                <Trash2 size={22} />
+              </button>
+            )}
           </div>
-
+          {/* Delete mode controls */}
+          {deleteMode && (
+            <div className="flex items-center gap-3 mb-2 justify-end">
+              {/* Select All checkbox */}
+              <label className="flex items-center gap-2 mr-auto select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedForDelete.size === images.length && images.length > 0}
+                  ref={el => {
+                    if (el) {
+                      el.indeterminate = selectedForDelete.size > 0 && selectedForDelete.size < images.length;
+                    }
+                  }}
+                  onChange={e => {
+                    if (e.target.checked) {
+                      setSelectedForDelete(new Set(images.map(img => img.key)));
+                    } else {
+                      setSelectedForDelete(new Set());
+                    }
+                  }}
+                />
+                <span className="text-gray-700 text-sm">Select All</span>
+              </label>
+              <button
+                className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 disabled:opacity-50"
+                onClick={handleDeleteSelected}
+                disabled={deleting || selectedForDelete.size === 0}
+              >
+                {deleting ? 'Deleting...' : `Delete Selected (${selectedForDelete.size})`}
+              </button>
+              <button
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                onClick={() => { setDeleteMode(false); setSelectedForDelete(new Set()); }}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-4 p-4">
             {images.map((image, idx) => (
               <div
                 key={image.key}
-                className="relative aspect-square overflow-hidden rounded-lg shadow-md cursor-pointer transform hover:scale-105 transition-transform duration-300"
+                className="relative aspect-square overflow-hidden rounded-xl shadow-md cursor-pointer group"
                 onClick={() => {
+                  if (deleteMode) {
+                    toggleSelectImage(image.key);
+                    return;
+                  }
                   setSelectedImage(image);
                   toggleHeaderFooter(false);
                 }}
               >
+                {/* Checkbox overlay in delete mode */}
+                {deleteMode && (
+                  <input
+                    type="checkbox"
+                    checked={selectedForDelete.has(image.key)}
+                    onChange={() => toggleSelectImage(image.key)}
+                    className="absolute top-2 left-2 z-20 w-5 h-5 accent-red-500 bg-white border-2 border-red-400 rounded focus:ring-2 focus:ring-red-300"
+                    onClick={e => e.stopPropagation()}
+                  />
+                )}
                 <img
                   src={image.url}
                   alt={`Event photo ${idx + 1}`}
                   className="w-full h-full object-cover"
                   loading="lazy"
                 />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDownload(image.url);
-                  }}
-                  className="absolute top-2 right-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors duration-200"
-                >
-                  <Download className="h-4 w-4" />
-                </button>
+                {!deleteMode && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDownload(image.url);
+                    }}
+                    className="absolute top-2 right-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors duration-200"
+                  >
+                    <Download className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             ))}
           </div>

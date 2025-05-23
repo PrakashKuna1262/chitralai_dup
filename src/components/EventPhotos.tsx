@@ -394,70 +394,32 @@ const EventPhotos: React.FC = () => {
             </div>
 
             {images.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {images.map((image) => (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                {images.map((image, idx) => (
                   <div
                     key={image.imageId}
-                    className="bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow border border-gray-200"
+                    className="relative aspect-square overflow-hidden rounded-xl shadow-md cursor-pointer group"
+                    onClick={() => {
+                      setSelectedImage(image);
+                      toggleHeaderFooter(false);
+                    }}
                   >
-                    <div 
-                      className="aspect-square relative cursor-pointer"
-                      onClick={() => {
-                        setSelectedImage(image);
-                        toggleHeaderFooter(false);
+                    <ProgressiveImage
+                      compressedSrc={image.imageUrl}
+                      originalSrc={image.imageUrl}
+                      alt={`Photo from ${image.eventName}`}
+                      className="w-full h-full object-cover"
+                    />
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        handleDownload(image.imageUrl);
                       }}
+                      className="absolute top-2 right-2 z-10 p-2 bg-white bg-opacity-90 rounded-full shadow-lg hover:bg-opacity-100 transition"
+                      title="Download photo"
                     >
-                      <img
-                        src={image.imageUrl}
-                        alt={`Photo from ${image.eventName}`}
-                        className="object-cover w-full h-full"
-                      />
-                      <div className="absolute top-2 right-2 flex space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            // Try native sharing first
-                            if (typeof navigator.share === 'function') {
-                              handleShare('', image.imageUrl, e);
-                            } else {
-                              // Fall back to custom share menu
-                              setShareMenu({
-                                isOpen: true,
-                                imageUrl: image.imageUrl,
-                                position: {
-                                  top: rect.top - 200,
-                                  left: rect.left - 200
-                                }
-                              });
-                            }
-                          }}
-                          className="p-2 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
-                          title="Share photo"
-                        >
-                          <Share2 className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownload(image.imageUrl);
-                          }}
-                          className="p-2 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
-                          title="Download photo"
-                        >
-                          <Download className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDownload(image.imageUrl);
-                        }}
-                        className="absolute top-2 right-2 p-2 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
-                      >
-                        <Download className="h-4 w-4" />
-                      </button>
-                    </div>
+                      <Download className="h-5 w-5 text-gray-700" />
+                    </button>
                   </div>
                 ))}
               </div>

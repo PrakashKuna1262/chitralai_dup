@@ -67,18 +67,18 @@ const GoogleLogin: React.FC<GoogleLoginProps> = ({ onSuccess, onError }) => {
     }
   };
 
+  const handleError = () => {
+    console.error('Google login error');
+    onError();
+  };
+
   return (
     <div className="flex justify-center p-2 rounded-lg hover:bg-blue-50 transition-all duration-300">
       <div className="w-full max-w-xs bg-white shadow-lg rounded-lg overflow-hidden hover:shadow-xl transition-all duration-300 border border-blue-100">
         <GoogleLoginButton
           onSuccess={handleSuccess}
-          onError={onError}
-          useOneTap={false}
-          type="standard"
-          theme="outline"
-          text="signin_with"
-          shape="rectangular"
-          logo_alignment="left"
+          onError={handleError}
+          useOneTap
         />
       </div>
     </div>

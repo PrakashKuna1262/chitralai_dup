@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Image as ImageIcon, ArrowLeft, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle } from 'lucide-react';
 import ProgressiveImage from './ProgressiveImage';
@@ -388,22 +388,25 @@ const MyPhotos: React.FC = () => {
                     toggleHeaderFooter(false);
                   }}
                 >
-                  <img
-                    src={image.imageUrl}
-                    alt={`Photo from ${image.eventName}`}
-                    className="object-cover w-full h-full"
-                  />
-                  <div className="absolute top-2 right-2 flex space-x-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDownload(image.imageUrl);
-                      }}
-                      className="p-2 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
-                      title="Download photo"
-                    >
-                      <Download className="h-4 w-4" />
-                    </button>
+                  <div className="relative w-full h-full">
+                    <ProgressiveImage
+                      compressedSrc={image.imageUrl}
+                      originalSrc={image.imageUrl}
+                      alt={`Photo from ${image.eventName}`}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute top-2 right-2 flex space-x-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(image.imageUrl);
+                        }}
+                        className="p-2 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
+                        title="Download photo"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
