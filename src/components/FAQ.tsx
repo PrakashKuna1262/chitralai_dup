@@ -57,33 +57,58 @@ const FAQ = () => {
               Our Partners
             </h3>
           </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="flex flex-wrap justify-center items-center gap-12 sm:gap-16"
-          >
-            <div className="w-64 h-28 relative">
-              <img
-                src="https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png"
-                alt="Draper"
-                className="w-full h-full object-contain"
-              />
-            </div>
-            <div className="w-64 h-28 relative">
-              <img
-                src="https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png"
-                alt="T-Hub"
-                className="w-full h-full object-contain"
-              />
-            </div>
-            <div className="w-64 h-28 relative">
-              <img
-                src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU"
-                alt="AWS for Startup"
-                className="w-full h-full object-contain"
-              />
-            </div>
+          <motion.div className="flex flex-col gap-8">
+            {/* Top row - 3 partners */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="flex flex-wrap justify-center items-center gap-12 sm:gap-16"
+            >
+              <div className="w-64 h-28 relative">
+                <img
+                  src="https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png"
+                  alt="Draper"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div className="w-64 h-28 relative">
+                <img
+                  src="https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png"
+                  alt="T-Hub"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div className="w-64 h-28 relative">
+                <img
+                  src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU"
+                  alt="AWS for Startup"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            </motion.div>
+            {/* Bottom row - 2 partners */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.3 }}
+              className="flex flex-wrap justify-center items-center gap-12 sm:gap-16"
+            >
+              <div className="w-64 h-28 relative">
+                <img
+                  src="https://tokyosuteam.metro.tokyo.lg.jp/en/cms/wp-content/uploads/1996/10/024-179.jpg"
+                  alt="Start2"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div className="w-64 h-28 relative">
+                <img
+                  src="https://upload.wikimedia.org/wikipedia/commons/0/02/German_Accelerator_Logo.png"
+                  alt="German Accelerator"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            </motion.div>
           </motion.div>
         </div>
 
