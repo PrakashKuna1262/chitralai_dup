@@ -8,6 +8,7 @@ import { UserContext } from '../App';
 import PhoneVerification from './PhoneVerification';
 import { s3ClientPromise, getOrganizationLogoPath, getOrganizationLogoUrl, ensureFolderStructure, getOrganizationFolderPath, validateEnvVariables } from '../config/aws';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { setupTokenRefresh, clearTokenRefresh, shouldRefreshToken } from '../config/auth';
 
 interface NavbarProps {
   mobileMenuOpen: boolean;
@@ -65,74 +66,115 @@ const Navbar: React.FC<NavbarProps> = ({
   const [scrolled, setScrolled] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTab] = useState<'signin' | 'signup'>('signin');
+  const tokenRefreshInterval = useRef<NodeJS.Timeout | null>(null);
+
+  const setAuthCookie = (token: string, expiresIn: number) => {
+    const expirationDate = new Date();
+    expirationDate.setTime(expirationDate.getTime() + expiresIn * 1000);
+    document.cookie = `auth_token=${token}; expires=${expirationDate.toUTCString()}; path=/; secure; samesite=strict`;
+  };
+
+  const getAuthCookie = () => {
+    const cookies = document.cookie.split(';');
+    const authCookie = cookies.find(cookie => cookie.trim().startsWith('auth_token='));
+    return authCookie ? authCookie.split('=')[1] : null;
+  };
+
+  const removeAuthCookie = () => {
+    document.cookie = 'auth_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; secure; samesite=strict';
+  };
 
   useEffect(() => {
-    const token = localStorage.getItem('googleToken');
-    const storedProfile = localStorage.getItem('userProfile');
-    
-    if (token && storedProfile) {
-      try {
-        const decoded = jwtDecode<DecodedToken>(token);
-        const exp = decoded.exp * 1000; // Convert to milliseconds
-        
-        if (exp > Date.now()) {
-          setIsLoggedIn(true);
-          setUserProfile(JSON.parse(storedProfile));
-          setUserEmail(decoded.email);
+    const checkAuth = async () => {
+      const token = getAuthCookie() || localStorage.getItem('googleToken');
+      const storedProfile = localStorage.getItem('userProfile');
+      
+      if (token && storedProfile) {
+        try {
+          const decoded = jwtDecode<DecodedToken>(token);
+          const exp = decoded.exp * 1000; // Convert to milliseconds
           
-          // Check user role from DynamoDB using both methods
-          const checkUserRole = async () => {
-            try {
-              // First try with getUserByEmail
-              let user = await getUserByEmail(decoded.email);
-              console.log('getUserByEmail result:', user);
-              
-              // If that fails, try with queryUserByEmail
-              if (!user) {
-                console.log('getUserByEmail returned null, trying queryUserByEmail');
-                user = await queryUserByEmail(decoded.email);
-                console.log('queryUserByEmail result:', user);
-              }
-              
-              if (user && user.role) {
-                console.log('User role found:', user.role);
-                setUserRole(user.role);
-              } else {
-                console.log('No user role found for email:', decoded.email);
-                // Set a consistent role of 'organizer' if no role is found
-                setUserRole('organizer');
-                
-                // Optionally, create/update the user record to include a role
-                try {
-                  const mobileNumber = localStorage.getItem('userMobile') || '';
-                  await storeUserCredentials({
-                    userId: decoded.email,
-                    email: decoded.email,
-                    name: JSON.parse(storedProfile).name || '',
-                    mobile: mobileNumber,
-                    role: 'organizer'
-                  });
-                  console.log('Added default user role to database');
-                } catch (err) {
-                  console.error('Error adding default user role:', err);
+          if (exp > Date.now()) {
+            setIsLoggedIn(true);
+            setUserProfile(JSON.parse(storedProfile));
+            setUserEmail(decoded.email);
+            
+            // Set up token refresh if needed
+            if (shouldRefreshToken(token)) {
+              const refreshToken = localStorage.getItem('refreshToken');
+              if (refreshToken) {
+                // Clear any existing interval
+                if (tokenRefreshInterval.current) {
+                  clearTokenRefresh(tokenRefreshInterval.current);
                 }
+                // Set up new refresh interval
+                tokenRefreshInterval.current = setupTokenRefresh(token, refreshToken);
               }
-            } catch (error) {
-              console.error('Error fetching user role:', error);
-              // Set a default role as fallback
-              setUserRole('user');
             }
-          };
-          
-          checkUserRole();
-        } else {
+            
+            // Check user role from DynamoDB using both methods
+            const checkUserRole = async () => {
+              try {
+                // First try with getUserByEmail
+                let user = await getUserByEmail(decoded.email);
+                console.log('getUserByEmail result:', user);
+                
+                // If that fails, try with queryUserByEmail
+                if (!user) {
+                  console.log('getUserByEmail returned null, trying queryUserByEmail');
+                  user = await queryUserByEmail(decoded.email);
+                  console.log('queryUserByEmail result:', user);
+                }
+                
+                if (user && user.role) {
+                  console.log('User role found:', user.role);
+                  setUserRole(user.role);
+                } else {
+                  console.log('No user role found for email:', decoded.email);
+                  // Set a consistent role of 'organizer' if no role is found
+                  setUserRole('organizer');
+                  
+                  // Optionally, create/update the user record to include a role
+                  try {
+                    const mobileNumber = localStorage.getItem('userMobile') || '';
+                    await storeUserCredentials({
+                      userId: decoded.email,
+                      email: decoded.email,
+                      name: JSON.parse(storedProfile).name || '',
+                      mobile: mobileNumber,
+                      role: 'organizer'
+                    });
+                    console.log('Added default user role to database');
+                  } catch (err) {
+                    console.error('Error adding default user role:', err);
+                  }
+                }
+              } catch (error) {
+                console.error('Error fetching user role:', error);
+                // Set a default role as fallback
+                setUserRole('user');
+              }
+            };
+            
+            checkUserRole();
+          } else {
+            handleLogout();
+          }
+        } catch (error) {
+          console.error('Error checking authentication:', error);
           handleLogout();
         }
-      } catch (error) {
-        console.error('Error checking authentication:', error);
-        handleLogout();
       }
-    }
+    };
+    
+    checkAuth();
+    
+    // Cleanup function to clear token refresh interval
+    return () => {
+      if (tokenRefreshInterval.current) {
+        clearTokenRefresh(tokenRefreshInterval.current);
+      }
+    };
   }, [setUserEmail, setUserRole]);
 
   // Update useEffect to set navType based on current location and user role
@@ -218,6 +260,10 @@ const Navbar: React.FC<NavbarProps> = ({
         return;
       }
 
+      // Store the token in both cookie and localStorage
+      setAuthCookie(credential, 3600); // 1 hour expiration
+      localStorage.setItem('googleToken', credential);
+      
       // Get the stored data
       const phoneNumber = localStorage.getItem('pendingPhoneNumber') || '';
       const organizationDataStr = localStorage.getItem('pendingOrganizationData');
@@ -338,9 +384,6 @@ const Navbar: React.FC<NavbarProps> = ({
         localStorage.setItem('organizationCode', organizationCode);
       }
       
-      if (credentialResponse.credential) {
-        localStorage.setItem('googleToken', credentialResponse.credential);
-      }
       localStorage.setItem('userProfile', JSON.stringify({
         name,
         email,
@@ -389,17 +432,25 @@ const Navbar: React.FC<NavbarProps> = ({
   };
 
   const handleLogout = () => {
+    // Clear token refresh interval
+    if (tokenRefreshInterval.current) {
+      clearTokenRefresh(tokenRefreshInterval.current);
+      tokenRefreshInterval.current = null;
+    }
+    
     setIsLoggedIn(false);
     setUserProfile(null);
     setUserRole(null);
     setUserEmail(null);
     setNavType(null);
+    removeAuthCookie();
     localStorage.removeItem('googleToken');
     localStorage.removeItem('userProfile');
     localStorage.removeItem('userEmail');
     localStorage.removeItem('userMobile');
     localStorage.removeItem('pendingAction');
     localStorage.removeItem('pendingRedirectUrl');
+    localStorage.removeItem('refreshToken');
     
     // Navigate to homepage and reload the page
     navigate('/', { replace: true });

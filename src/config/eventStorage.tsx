@@ -8,6 +8,8 @@ import {
   UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { docClientPromise } from './dynamodb';
+import { s3ClientPromise, validateEnvVariables } from './aws';
+import { DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 // Table name for storing events
 export const EVENTS_TABLE = 'Events';
@@ -32,8 +34,10 @@ export interface EventData {
   emailAccess?: string[]; // List of email addresses that can access the event
   organizationCode?: string; // Organization code of the event creator
   anyoneCanUpload?: boolean; // Whether anyone can upload photos to this event
-  totalImageSize?: number; // Total size in MB or GB
+  totalImageSize?: number; // Total original size in MB or GB
   totalImageSizeUnit?: 'MB' | 'GB'; // Unit of measurement for totalImageSize
+  totalCompressedSize?: number; // Total compressed size in MB or GB
+  totalCompressedSizeUnit?: 'MB' | 'GB'; // Unit of measurement for totalCompressedSize
 }
 
 // Helper function to convert bytes to MB
@@ -129,7 +133,9 @@ export const storeEventData = async (eventData: Omit<EventData, 'createdAt' | 'u
       organizationCode: organizationCode || null, // Add organization code
       anyoneCanUpload: eventData.anyoneCanUpload || false, // Add anyoneCanUpload
       totalImageSize: eventData.totalImageSize || 0, // Add totalImageSize
-      totalImageSizeUnit: eventData.totalImageSizeUnit || 'MB' // Add totalImageSizeUnit
+      totalImageSizeUnit: eventData.totalImageSizeUnit || 'MB', // Add totalImageSizeUnit
+      totalCompressedSize: eventData.totalCompressedSize || 0, // Add totalCompressedSize
+      totalCompressedSizeUnit: eventData.totalCompressedSizeUnit || 'MB' // Add totalCompressedSizeUnit
     };
 
     // Log the item being stored (helpful for debugging)
@@ -330,6 +336,7 @@ export const updateEventData = async (
 // Delete an event
 export const deleteEvent = async (eventId: string, userEmail: string): Promise<boolean> => {
   try {
+    // First delete from DynamoDB
     const command = new DeleteCommand({
       TableName: EVENTS_TABLE,
       Key: {
@@ -338,9 +345,35 @@ export const deleteEvent = async (eventId: string, userEmail: string): Promise<b
     });
 
     await (await docClientPromise).send(command);
+
+    // Then delete all associated files from S3
+    const { bucketName } = await validateEnvVariables();
+    const s3Client = await s3ClientPromise;
+    
+    // List all objects in the event's directory
+    const listCommand = new ListObjectsV2Command({
+      Bucket: bucketName,
+      Prefix: `events/shared/${eventId}/`
+    });
+
+    const listedObjects = await s3Client.send(listCommand);
+    
+    if (listedObjects.Contents && listedObjects.Contents.length > 0) {
+      // Delete all objects in parallel
+      const deletePromises = listedObjects.Contents.map(({ Key }) => {
+        if (!Key) return Promise.resolve();
+        return s3Client.send(new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key
+        }));
+      });
+
+      await Promise.all(deletePromises);
+    }
+
     return true;
   } catch (error) {
-    console.error("Error deleting event from DynamoDB:", error);
+    console.error("Error deleting event:", error);
     return false;
   }
 };
