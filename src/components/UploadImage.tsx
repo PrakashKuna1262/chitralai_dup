@@ -5,6 +5,7 @@ import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, Sh
 import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getUserEvents, getEventById, updateEventData, convertToAppropriateUnit, addSizes, formatSize } from '../config/eventStorage';
+import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 
 // Add type declaration for directory upload attributes
@@ -378,9 +379,11 @@ const UploadImage = () => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
       
-      // Validate files before proceeding
+      // Track duplicates and valid files
       const validFiles: File[] = [];
       const invalidFiles: { name: string; reason: string }[] = [];
+      const duplicateFiles: string[] = [];
+      const existingFileNames = new Set(images.map(img => img.name));
       let newTotalSize = 0;
       
       for (const file of files) {
@@ -388,6 +391,12 @@ const UploadImage = () => {
         const isValidType = file.type.startsWith('image/');
         const isValidSize = file.size <= MAX_FILE_SIZE;
         const isNotSelfie = !fileName.includes('selfie') && !fileName.includes('self');
+        const isDuplicate = existingFileNames.has(file.name);
+        
+        if (isDuplicate) {
+          duplicateFiles.push(file.name);
+          continue;
+        }
         
         if (!isValidType) {
           invalidFiles.push({ name: file.name, reason: 'Not a valid image file' });
@@ -409,23 +418,36 @@ const UploadImage = () => {
             validFiles.push(file);
           }
           newTotalSize += file.size;
+          existingFileNames.add(file.name); // Add to set to prevent future duplicates
         }
       }
 
-      // Show error message for invalid files
+      // Show error messages for invalid files and duplicates
+      let warningMessage = '';
+      
+      if (duplicateFiles.length > 0) {
+        warningMessage += `${duplicateFiles.length} duplicate file(s) were skipped:\n${
+          duplicateFiles.slice(0, 5).map(f => `- ${f}`).join('\n')
+        }${duplicateFiles.length > 5 ? `\n...and ${duplicateFiles.length - 5} more` : ''}\n\n`;
+      }
+      
       if (invalidFiles.length > 0) {
-        const warningMessage = `${invalidFiles.length} file(s) were skipped:\n${
+        warningMessage += `${invalidFiles.length} invalid file(s) were skipped:\n${
           invalidFiles.slice(0, 5).map(f => `- ${f.name}: ${f.reason}`).join('\n')
         }${invalidFiles.length > 5 ? `\n...and ${invalidFiles.length - 5} more` : ''}`;
-        
+      }
+
+      if (warningMessage) {
         alert(warningMessage);
       }
 
-      // Batch update images
-      setImages(prev => [...prev, ...validFiles]);
-      setTotalSize(prev => prev + newTotalSize);
+      // Only update state if we have valid files and no duplicates
+      if (validFiles.length > 0 && duplicateFiles.length === 0) {
+        setImages(prev => [...prev, ...validFiles]);
+        setTotalSize(prev => prev + newTotalSize);
+      }
     }
-  }, []);
+  }, [images]);
 
   const removeImage = useCallback((index: number) => {
     setImages(prev => {
@@ -755,36 +777,98 @@ const UploadImage = () => {
     setUploadProgress({ current: 0, total: totalCount });
 
     try {
-      // Calculate total size of images being uploaded in bytes
-      const totalUploadSizeBytes = images.reduce((sum, file) => sum + file.size, 0);
+      // Get existing images from the event to check for duplicates
+      const currentEvent = await getEventById(selectedEvent);
+      if (!currentEvent) {
+        throw new Error('Event not found');
+      }
+
+      // Get existing image names from S3
+      const existingImages = new Set();
+      if (currentEvent.photoCount > 0) {
+        // List objects in the event's S3 directory
+        const s3Client = await s3ClientPromise;
+        const { bucketName } = await validateEnvVariables();
+        const listCommand = new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: `events/shared/${selectedEvent}/images/`
+        });
+        
+        const listedObjects = await s3Client.send(listCommand);
+        if (listedObjects.Contents) {
+          listedObjects.Contents.forEach(obj => {
+            if (obj.Key) {
+              const fileName = obj.Key.split('/').pop();
+              if (fileName) {
+                existingImages.add(fileName);
+              }
+            }
+          });
+        }
+      }
       
-      // Convert to appropriate unit (MB or GB)
-      const { size: totalUploadSize, unit: totalUploadUnit } = convertToAppropriateUnit(totalUploadSizeBytes);
+      // Filter out duplicates
+      const uniqueImages = images.filter(file => !existingImages.has(file.name));
       
-      // Process all files using the optimized upload queue
-      const results = await uploadToS3WithRetryQueue(images);
+      if (uniqueImages.length === 0) {
+        alert('All selected images are duplicates. No new images to upload.');
+        setIsUploading(false);
+        return;
+      }
+
+      if (uniqueImages.length < images.length) {
+        const duplicateCount = images.length - uniqueImages.length;
+        alert(`${duplicateCount} duplicate image(s) were skipped. Only ${uniqueImages.length} unique image(s) will be uploaded.`);
+      }
+
+      // Calculate total original size of unique images being uploaded in bytes
+      const totalOriginalSizeBytes = uniqueImages.reduce((sum, file) => sum + file.size, 0);
       
-      // Update event data
+      // Calculate compressed sizes
+      let totalCompressedSizeBytes = 0;
+      const compressedFiles: File[] = [];
+      
+      for (const file of uniqueImages) {
+        const compressedBlob = await compressImage(file);
+        const compressedFile = new File([compressedBlob], file.name, { type: file.type });
+        totalCompressedSizeBytes += compressedBlob.size;
+        compressedFiles.push(compressedFile);
+      }
+      
+      // Convert both sizes to appropriate units
+      const { size: totalOriginalSize, unit: totalOriginalUnit } = convertToAppropriateUnit(totalOriginalSizeBytes);
+      const { size: totalCompressedSize, unit: totalCompressedUnit } = convertToAppropriateUnit(totalCompressedSizeBytes);
+      
+      // Process only unique files using the optimized upload queue
+      const results = await uploadToS3WithRetryQueue(compressedFiles);
+      
+      // Update event data only if we have successful uploads
       if (results.length > 0) {
         const userEmail = localStorage.getItem('userEmail');
         if (userEmail) {
           try {
-            const currentEvent = await getEventById(selectedEvent);
-            if (currentEvent) {
-              // Add the new size to the existing size
-              const { size: newTotalSize, unit: newTotalUnit } = addSizes(
-                currentEvent.totalImageSize || 0,
-                currentEvent.totalImageSizeUnit || 'MB',
-                totalUploadSize,
-                totalUploadUnit
-              );
+            // Add the new sizes to the existing sizes
+            const { size: newTotalOriginalSize, unit: newTotalOriginalUnit } = addSizes(
+              currentEvent.totalImageSize || 0,
+              currentEvent.totalImageSizeUnit || 'MB',
+              totalOriginalSize,
+              totalOriginalUnit
+            );
 
-              await updateEventData(selectedEvent, userEmail, {
-                photoCount: (currentEvent.photoCount || 0) + results.length,
-                totalImageSize: newTotalSize,
-                totalImageSizeUnit: newTotalUnit
-              });
-            }
+            const { size: newTotalCompressedSize, unit: newTotalCompressedUnit } = addSizes(
+              currentEvent.totalCompressedSize || 0,
+              currentEvent.totalCompressedSizeUnit || 'MB',
+              totalCompressedSize,
+              totalCompressedUnit
+            );
+
+            await updateEventData(selectedEvent, userEmail, {
+              photoCount: (currentEvent.photoCount || 0) + results.length,
+              totalImageSize: newTotalOriginalSize,
+              totalImageSizeUnit: newTotalOriginalUnit,
+              totalCompressedSize: newTotalCompressedSize,
+              totalCompressedSizeUnit: newTotalCompressedUnit
+            });
           } catch (error) {
             console.error('Error updating event data:', error);
           }
@@ -796,10 +880,10 @@ const UploadImage = () => {
         setUploadSuccess(true);
         setShowQRModal(true);
 
-        // Show success message with upload stats
+        // Show success message with only original size
         const uploadTimeInSeconds = (Date.now() - uploadStartTime) / 1000;
-        const uploadSpeedMBps = (totalSize / (1024 * 1024)) / uploadTimeInSeconds;
-        console.log(`Upload completed: ${results.length} files, ${formatSize(totalUploadSize, totalUploadUnit)} in ${uploadTimeInSeconds.toFixed(1)}s (${uploadSpeedMBps.toFixed(2)} MB/s)`);
+        const uploadSpeedMBps = (totalCompressedSizeBytes / (1024 * 1024)) / uploadTimeInSeconds;
+        console.log(`Upload completed: ${results.length} files, ${formatSize(totalOriginalSize, totalOriginalUnit)} in ${uploadTimeInSeconds.toFixed(1)}s (${uploadSpeedMBps.toFixed(2)} MB/s)`);
       }
 
       setImages([]);
