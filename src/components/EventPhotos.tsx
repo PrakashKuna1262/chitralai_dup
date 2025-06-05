@@ -394,32 +394,37 @@ const EventPhotos: React.FC = () => {
             </div>
 
             {images.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-                {images.map((image, idx) => (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                {images.map((image) => (
                   <div
                     key={image.imageId}
-                    className="relative aspect-square overflow-hidden rounded-xl shadow-md cursor-pointer group"
-                    onClick={() => {
-                      setSelectedImage(image);
-                      toggleHeaderFooter(false);
-                    }}
+                    className="bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow border border-gray-200"
                   >
-                    <ProgressiveImage
-                      compressedSrc={image.imageUrl}
-                      originalSrc={image.imageUrl}
-                      alt={`Photo from ${image.eventName}`}
-                      className="w-full h-full object-cover"
-                    />
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        handleDownload(image.imageUrl);
+                    <div 
+                      className="aspect-square relative cursor-pointer"
+                      onClick={() => {
+                        setSelectedImage(image);
+                        toggleHeaderFooter(false);
                       }}
-                      className="absolute top-2 right-2 z-10 p-2 bg-white bg-opacity-90 rounded-full shadow-lg hover:bg-opacity-100 transition"
-                      title="Download photo"
                     >
-                      <Download className="h-5 w-5 text-gray-700" />
-                    </button>
+                      <img
+                        src={image.imageUrl}
+                        alt={`Photo from ${image.eventName}`}
+                        className="absolute inset-0 w-full h-full object-cover rounded-lg"
+                      />
+                      <div className="absolute top-2 right-2 flex space-x-2 z-10">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownload(image.imageUrl);
+                          }}
+                          className="p-2 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
+                          title="Download photo"
+                        >
+                          <Download className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
