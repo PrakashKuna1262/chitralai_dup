@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Camera, Image, Video, Users, Plus, X, Trash2, Copy, RefreshCw, CheckCircle, Edit, QrCode } from 'lucide-react';
+import { Camera, Image, Video, Users, Plus, X, Trash2, Copy, RefreshCw, CheckCircle, Edit, QrCode, Download } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
     storeEventData, 
@@ -136,6 +136,8 @@ const EventDashboard = (props: EventDashboardProps) => {
             return new Date(b.date).getTime() - new Date(a.date).getTime();
         }
     });
+
+    const qrRef = useRef<SVGSVGElement | null>(null);
 
     useEffect(() => {
         loadEvents();
@@ -851,6 +853,31 @@ const EventDashboard = (props: EventDashboardProps) => {
         }
     };
 
+    const handleDownloadQR = () => {
+        if (!qrRef.current) return;
+        const svg = qrRef.current;
+        const serializer = new XMLSerializer();
+        const svgString = serializer.serializeToString(svg);
+
+        // Create a canvas and draw the SVG onto it
+        const canvas = document.createElement('canvas');
+        canvas.width = 200;
+        canvas.height = 200;
+        const ctx = canvas.getContext('2d');
+        const img = new window.Image();
+        img.onload = () => {
+            ctx?.drawImage(img, 0, 0);
+            const pngUrl = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.href = pngUrl;
+            link.download = 'organization-qr.png';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+        img.src = 'data:image/svg+xml;base64,' + window.btoa(unescape(encodeURIComponent(svgString)));
+    };
+
     return (
         <div className={`relative bg-blue-45 flex flex-col pt-16 sm:pt-16 ${events.length === 0 ? 'h-[calc(100vh-70px)]' : 'min-h-screen'}`}>
             <div className="relative z-10 container mx-auto px-4 py-4 sm:py-6 flex-grow">
@@ -992,38 +1019,43 @@ const EventDashboard = (props: EventDashboardProps) => {
                                 </div>
                                 <div className="flex flex-col items-center gap-4">
                                     <QRCodeSVG
+                                        ref={qrRef}
                                         value={`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`}
                                         size={200}
                                         level="H"
                                         includeMargin
                                     />
-                                    <div className="text-center space-y-3">
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-2">Organization Code:</p>
-                                            <p className="font-mono text-lg font-semibold text-blue-700">{userProfile.organizationCode}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-sm text-gray-600 mb-2">Share this link:</p>
-                                            <div className="flex items-center justify-center space-x-2">
-                                                <input
-                                                    type="text"
-                                                    readOnly
-                                                    value={`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`}
-                                                    className="text-sm bg-gray-100 border rounded px-3 py-2 w-64 text-gray-700"
-                                                />
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        navigator.clipboard.writeText(`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`);
-                                                        setCopiedCode(true);
-                                                        setTimeout(() => setCopiedCode(false), 2000);
-                                                    }}
-                                                    className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
-                                                >
-                                                    {copiedCode ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                                                </button>
-                                            </div>
-                                        </div>
+                                    {/* Organization Code Display */}
+                                    <div className="text-center mb-2">
+                                        <span className="text-sm text-gray-600">Organization Code:</span>
+                                        <div className="font-mono text-lg font-semibold text-blue-700 mt-1">{userProfile.organizationCode}</div>
+                                    </div>
+                                    <div className="flex items-center justify-center space-x-2">
+                                        <input
+                                            type="text"
+                                            readOnly
+                                            value={`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`}
+                                            className="text-sm bg-gray-100 border rounded px-3 py-2 w-64 text-gray-700"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`);
+                                                setCopiedCode(true);
+                                                setTimeout(() => setCopiedCode(false), 2000);
+                                            }}
+                                            className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
+                                        >
+                                            {copiedCode ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleDownloadQR}
+                                            className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
+                                            title="Download QR"
+                                        >
+                                            <Download className="w-4 h-4" />
+                                        </button>
                                     </div>
                                 </div>
                             </div>
