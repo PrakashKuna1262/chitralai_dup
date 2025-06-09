@@ -133,7 +133,7 @@ export const GoogleAuthConfig: React.FC<{ children: React.ReactNode }> = ({ chil
 
   if (clientId === null) {
     // Optionally show a loading spinner or fallback
-    return <div>Loading...</div>;
+    return;
   }
 
   return (
