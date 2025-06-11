@@ -57,58 +57,51 @@ const FAQ = () => {
               Our Partners
             </h3>
           </motion.div>
-          <motion.div className="flex flex-col gap-8">
-            {/* Top row - 3 partners */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              className="flex flex-wrap justify-center items-center gap-12 sm:gap-16"
-            >
-              <div className="w-64 h-28 relative">
-                <img
-                  src="https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png"
-                  alt="Draper"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-              <div className="w-64 h-28 relative">
-                <img
-                  src="https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png"
-                  alt="T-Hub"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-              <div className="w-64 h-28 relative">
-                <img
-                  src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU"
-                  alt="AWS for Startup"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-            </motion.div>
-            {/* Bottom row - 2 partners */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.3 }}
-              className="flex flex-wrap justify-center items-center gap-12 sm:gap-16"
-            >
-              <div className="w-64 h-28 relative">
-                <img
-                  src="https://tokyosuteam.metro.tokyo.lg.jp/en/cms/wp-content/uploads/1996/10/024-179.jpg"
-                  alt="Start2"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-              <div className="w-64 h-28 relative">
-                <img
-                  src="https://upload.wikimedia.org/wikipedia/commons/0/02/German_Accelerator_Logo.png"
-                  alt="German Accelerator"
-                  className="w-full h-full object-contain"
-                />
-              </div>
-            </motion.div>
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="w-full"
+          >
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-6 sm:gap-8 px-4">
+              {[
+                {
+                  src: "https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png",
+                  alt: "Draper"
+                },
+                {
+                  src: "https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png",
+                  alt: "T-Hub"
+                },
+                {
+                  src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU",
+                  alt: "AWS for Startup"
+                },
+                {
+                  src: "https://tokyosuteam.metro.tokyo.lg.jp/en/cms/wp-content/uploads/1996/10/024-179.jpg",
+                  alt: "Start2"
+                },
+                {
+                  src: "https://upload.wikimedia.org/wikipedia/commons/0/02/German_Accelerator_Logo.png",
+                  alt: "German Accelerator"
+                },
+                {
+                  src: "https://hyderabad.tie.org/wp-content/uploads/2025/02/TiE-Logo-Black.png",
+                  alt: "German Accelerator"
+                }
+              ].map((partner, index) => (
+                <div 
+                  key={index}
+                  className="flex items-center justify-center h-32 p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-300"
+                >
+                  <img
+                    src={partner.src}
+                    alt={partner.alt}
+                    className="max-h-full max-w-full object-contain p-2"
+                  />
+                </div>
+              ))}
+            </div>
           </motion.div>
         </div>
 
