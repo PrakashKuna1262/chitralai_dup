@@ -119,8 +119,11 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
   const [anyoneCanUpload, setAnyoneCanUpload] = useState(false);
   const [eventName, setEventName] = useState<string>('');
   const [deleteMode, setDeleteMode] = useState(false);
+  const [shareMode, setShareMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
+  const [selectedForShare, setSelectedForShare] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   const qrCodeRef = useRef<SVGSVGElement>(null);
 
@@ -335,17 +338,29 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     }
   };
 
-  // Handler for toggling selection
-  const toggleSelectImage = (key: string) => {
-    setSelectedForDelete(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(key)) {
-        newSet.delete(key);
-      } else {
-        newSet.add(key);
-      }
-      return newSet;
-    });
+  // Handler for toggling selection for delete
+  const toggleSelectImage = (key: string, mode: 'delete' | 'share' = 'delete') => {
+    if (mode === 'delete') {
+      setSelectedForDelete(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(key)) {
+          newSet.delete(key);
+        } else {
+          newSet.add(key);
+        }
+        return newSet;
+      });
+    } else {
+      setSelectedForShare(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(key)) {
+          newSet.delete(key);
+        } else {
+          newSet.add(key);
+        }
+        return newSet;
+      });
+    }
   };
 
   // Handler for deleting selected images
@@ -377,6 +392,47 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
       alert('Failed to delete images. Please try again.');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  // Handler for sharing selected images
+  const handleShareSelected = async () => {
+    if (selectedForShare.size === 0) return;
+    setSharing(true);
+    try {
+      const selectedImages = images.filter(img => selectedForShare.has(img.key));
+      const shareData = {
+        title: `Photos from ${eventName}`,
+        text: `Check out these photos from ${eventName}`,
+        urls: selectedImages.map(img => img.url)
+      };
+      
+      // Try Web Share API first
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: shareData.title,
+            text: shareData.text,
+            url: window.location.href
+          });
+        } catch (err) {
+          // User cancelled share or it failed, fall back to clipboard
+          await navigator.clipboard.writeText(shareData.urls.join('\n'));
+          alert('Image links copied to clipboard!');
+        }
+      } else {
+        // Fallback for browsers that don't support Web Share API
+        await navigator.clipboard.writeText(shareData.urls.join('\n'));
+        alert('Image links copied to clipboard!');
+      }
+      
+      setSelectedForShare(new Set());
+      setShareMode(false);
+    } catch (err) {
+      console.error('Error sharing images:', err);
+      alert('Failed to share images. Please try again.');
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -548,17 +604,73 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
         <div className="space-y-8">
           <div className="flex items-center justify-between mb-4 relative">
             <h2 className="text-2xl font-bold text-gray-900-mt-1">Event Photos</h2>
-            {/* Floating trashcan icon for delete mode */}
-            {!deleteMode && (
-              <button
-                className="absolute right-0 top-1 p-2 rounded-full bg-red-100 hover:bg-red-200 text-red-600 shadow transition"
-                title="Delete images"
-                onClick={() => setDeleteMode(true)}
-              >
-                <Trash2 size={22} />
-              </button>
-            )}
+            <div className="absolute right-0 top-1 flex gap-2">
+              {/* Share button */}
+              {!deleteMode && !shareMode && (
+                <button
+                  className="p-2 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-600 shadow transition"
+                  title="Share images"
+                  onClick={() => setShareMode(true)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
+                    <polyline points="16 6 12 2 8 6"></polyline>
+                    <line x1="12" y1="2" x2="12" y2="15"></line>
+                  </svg>
+                </button>
+              )}
+              {/* Trash button */}
+              {!deleteMode && !shareMode && (
+                <button
+                  className="p-2 rounded-full bg-red-100 hover:bg-red-200 text-red-600 shadow transition"
+                  title="Delete images"
+                  onClick={() => setDeleteMode(true)}
+                >
+                  <Trash2 size={22} />
+                </button>
+              )}
+            </div>
           </div>
+          {/* Share mode controls */}
+          {shareMode && (
+            <div className="flex items-center gap-3 mb-2 justify-end">
+              {/* Select All checkbox */}
+              <label className="flex items-center gap-2 mr-auto select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedForShare.size === images.length && images.length > 0}
+                  ref={el => {
+                    if (el) {
+                      el.indeterminate = selectedForShare.size > 0 && selectedForShare.size < images.length;
+                    }
+                  }}
+                  onChange={e => {
+                    if (e.target.checked) {
+                      setSelectedForShare(new Set(images.map(img => img.key)));
+                    } else {
+                      setSelectedForShare(new Set());
+                    }
+                  }}
+                />
+                <span className="text-gray-700 text-sm">Select All</span>
+              </label>
+              <button
+                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
+                onClick={handleShareSelected}
+                disabled={sharing || selectedForShare.size === 0}
+              >
+                {sharing ? 'Sharing...' : `Share Selected (${selectedForShare.size})`}
+              </button>
+              <button
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                onClick={() => { setShareMode(false); setSelectedForShare(new Set()); }}
+                disabled={sharing}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {/* Delete mode controls */}
           {deleteMode && (
             <div className="flex items-center gap-3 mb-2 justify-end">
@@ -612,13 +724,13 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                   toggleHeaderFooter(false);
                 }}
               >
-                {/* Checkbox overlay in delete mode */}
-                {deleteMode && (
+                {/* Checkbox overlay in delete/share mode */}
+                {(deleteMode || shareMode) && (
                   <input
                     type="checkbox"
-                    checked={selectedForDelete.has(image.key)}
-                    onChange={() => toggleSelectImage(image.key)}
-                    className="absolute top-2 left-2 z-20 w-5 h-5 accent-red-500 bg-white border-2 border-red-400 rounded focus:ring-2 focus:ring-red-300"
+                    checked={deleteMode ? selectedForDelete.has(image.key) : selectedForShare.has(image.key)}
+                    onChange={() => toggleSelectImage(image.key, deleteMode ? 'delete' : 'share')}
+                    className={`absolute top-2 left-2 z-20 w-5 h-5 ${deleteMode ? 'accent-red-500 border-red-400 focus:ring-red-300' : 'accent-blue-500 border-blue-400 focus:ring-blue-300'} bg-white border-2 rounded focus:ring-2`}
                     onClick={e => e.stopPropagation()}
                   />
                 )}
@@ -628,7 +740,7 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                   className="w-full h-full object-cover"
                   loading="lazy"
                 />
-                {!deleteMode && (
+                {!deleteMode && !shareMode && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
