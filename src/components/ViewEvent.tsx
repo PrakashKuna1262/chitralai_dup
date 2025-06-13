@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { ListObjectsV2Command, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -399,31 +400,132 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
   const handleShareSelected = async () => {
     if (selectedForShare.size === 0) return;
     setSharing(true);
+    
     try {
-      const selectedImages = images.filter(img => selectedForShare.has(img.key));
+      const { bucketName } = await validateEnvVariables();
+      const s3Client = await s3ClientPromise;
+      
+      // Get signed URLs for the selected images (without forcing download)
+      const imagePromises = Array.from(selectedForShare).map(async (key) => {
+        const command = new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        });
+        
+        // Generate a presigned URL that's valid for 1 hour
+        const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+        const response = await fetch(signedUrl);
+        if (!response.ok) throw new Error(`Failed to fetch ${key}`);
+        const blob = await response.blob();
+        const filename = key.split('/').pop() || `photo-${Date.now()}.jpg`;
+        return new File([blob], filename, { type: blob.type || 'image/jpeg' });
+      });
+
+      const imageFiles = await Promise.all(imagePromises);
+      
+      // Create share data with files
       const shareData = {
         title: `Photos from ${eventName}`,
         text: `Check out these photos from ${eventName}`,
-        urls: selectedImages.map(img => img.url)
+        files: imageFiles
       };
       
-      // Try Web Share API first
-      if (navigator.share) {
+      // Try Web Share API with files if supported
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: imageFiles })) {
         try {
-          await navigator.share({
-            title: shareData.title,
-            text: shareData.text,
-            url: window.location.href
-          });
-        } catch (err) {
-          // User cancelled share or it failed, fall back to clipboard
-          await navigator.clipboard.writeText(shareData.urls.join('\n'));
-          alert('Image links copied to clipboard!');
+          await navigator.share(shareData);
+        } catch (err: any) {
+          if (err.name !== 'AbortError') {
+            console.error('Error sharing files:', err);
+            throw err; // Rethrow to be caught by the outer catch
+          }
         }
       } else {
-        // Fallback for browsers that don't support Web Share API
-        await navigator.clipboard.writeText(shareData.urls.join('\n'));
-        alert('Image links copied to clipboard!');
+        // Fallback for browsers that don't support sharing files
+        // Create a temporary container for the share UI
+        const shareContainer = document.createElement('div');
+        shareContainer.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        shareContainer.innerHTML = `
+          <div class="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 class="text-lg font-semibold mb-4">Share Options</h3>
+            <p class="mb-4">Your browser doesn't support direct sharing of multiple files. Please use one of these options:</p>
+            <div class="grid grid-cols-2 gap-4">
+              <button id="copy-links" class="p-3 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                Copy Links
+              </button>
+              <button id="download-zip" class="p-3 bg-green-100 text-green-700 rounded hover:bg-green-200">
+                Download All
+              </button>
+            </div>
+            <div class="mt-4 flex justify-end">
+              <button id="cancel-share" class="px-4 py-2 text-gray-600 hover:text-gray-800">
+                Cancel
+              </button>
+            </div>
+          </div>
+        `;
+        
+        document.body.appendChild(shareContainer);
+        
+        // Set up event listeners for the share options
+        return new Promise<void>((resolve) => {
+          const copyLinksBtn = shareContainer.querySelector('#copy-links');
+          const downloadZipBtn = shareContainer.querySelector('#download-zip');
+          const cancelBtn = shareContainer.querySelector('#cancel-share');
+          
+          const cleanup = () => {
+            document.body.removeChild(shareContainer);
+            setSelectedForShare(new Set());
+            setShareMode(false);
+            setSharing(false);
+            resolve();
+          };
+          
+          if (copyLinksBtn) {
+            copyLinksBtn.addEventListener('click', async () => {
+              const urls = imageFiles.map(file => URL.createObjectURL(file));
+              await navigator.clipboard.writeText(urls.join('\n'));
+              alert('Image links copied to clipboard!');
+              cleanup();
+            });
+          }
+          
+          if (downloadZipBtn) {
+            downloadZipBtn.addEventListener('click', async () => {
+              const JSZip = (await import('jszip')).default;
+              const zip = new JSZip();
+              const imgFolder = zip.folder('photos');
+              
+              if (imgFolder) {
+                imageFiles.forEach((file, index) => {
+                  imgFolder.file(`photo-${index + 1}.jpg`, file);
+                });
+                
+                const content = await zip.generateAsync({ type: 'blob' });
+                const url = URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `photos-${eventName}-${new Date().toISOString().split('T')[0]}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                cleanup();
+              }
+            });
+          }
+          
+          if (cancelBtn) {
+            cancelBtn.addEventListener('click', cleanup);
+          }
+          
+          // Close when clicking outside the modal
+          shareContainer.addEventListener('click', (e) => {
+            if (e.target === shareContainer) {
+              cleanup();
+            }
+          });
+        });
       }
       
       setSelectedForShare(new Set());
