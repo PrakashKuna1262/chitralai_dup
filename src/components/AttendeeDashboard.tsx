@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Camera, Calendar, Image as ImageIcon, X, Search, Download, Share2, Facebook, Instagram, Twitter, Linkedin, MessageCircle, Mail, Link } from 'lucide-react';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
@@ -7,7 +7,7 @@ import { s3ClientPromise, rekognitionClientPromise, validateEnvVariables } from 
 import { CompareFacesCommand } from '@aws-sdk/client-rekognition';
 import { getEventById } from '../config/eventStorage';
 import { storeAttendeeImageData } from '../config/attendeeStorage';
-import { compareFaces } from '../services/faceRecognition';
+import { searchFacesByImage } from '../services/faceRecognition';
 
 interface Event {
   eventId: string;
@@ -23,6 +23,7 @@ interface MatchingImage {
   eventName: string;
   imageUrl: string;
   matchedDate: string;
+  similarity: number;
 }
 
 interface Statistics {
@@ -67,7 +68,7 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
   
   // New state variables for camera functionality
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [videoRef, setVideoRef] = useState<HTMLVideoElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [showCameraModal, setShowCameraModal] = useState(false);
   
@@ -84,6 +85,12 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
     imageUrl: '',
     position: { top: 0, left: 0 }
   });
+
+  const [selectedEvent, setSelectedEvent] = useState<string>('');
+  const [selfieImage, setSelfieImage] = useState<File | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
   // Toggle header and footer visibility when image is clicked
   const toggleHeaderFooter = (visible: boolean) => {
@@ -255,7 +262,8 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
       eventId: event.id,
       eventName: existingData.eventName || event.name,
       imageUrl: url,
-      matchedDate: existingData.uploadedAt
+      matchedDate: existingData.uploadedAt,
+      similarity: 0
     }));
     
     // Check if these images are already in the state
@@ -355,7 +363,8 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
                   eventId: data.eventId,
                   eventName: eventName,
                   imageUrl: imageUrl,
-                  matchedDate: data.uploadedAt
+                  matchedDate: data.uploadedAt,
+                  similarity: 0
                 });
               });
             }
@@ -506,7 +515,8 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
           eventId: event.id,
           eventName: existingData.eventName || event.name,
           imageUrl: url,
-          matchedDate: existingData.uploadedAt
+          matchedDate: existingData.uploadedAt,
+          similarity: 0
         }));
         
         // Check if these images are already in the state
@@ -573,305 +583,23 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
     }
   };
 
-  // New function to perform face comparison with existing selfie
-  const performFaceComparisonWithExistingSelfie = async (userEmail: string, existingSelfieUrl: string, event: any) => {
-    try {
-      setIsUploading(true);
-      setProcessingStatus('Comparing with event images...');
-      
-      // Extract the S3 key from the selfie URL
-      const { bucketName } = await validateEnvVariables();
-      let selfiePath = '';
-      
-      if (existingSelfieUrl.startsWith(`https://${bucketName}.s3.amazonaws.com/`)) {
-        selfiePath = existingSelfieUrl.substring(`https://${bucketName}.s3.amazonaws.com/`.length);
-      } else {
-        throw new Error('Could not determine S3 path for the existing selfie');
-      }
-      
-      // Get the list of images in the event
-      const imagesPath = `events/shared/${event.id}/images/`;
-      let allImageKeys: string[] = [];
-      let continuationToken: string | undefined;
-
-      do {
-        const listCommand = new ListObjectsV2Command({
-          Bucket: bucketName,
-          Prefix: imagesPath,
-          MaxKeys: 1000,
-          ContinuationToken: continuationToken
-        });
-        
-        const listResponse = await (await s3ClientPromise).send(listCommand);
-        
-        if (listResponse.Contents) {
-          const imageKeys = listResponse.Contents
-            .filter(item => item.Key && /\.(jpg|jpeg|png)$/i.test(item.Key!))
-            .map(item => item.Key!);
-          allImageKeys.push(...imageKeys);
-        }
-        
-        continuationToken = listResponse.NextContinuationToken;
-      } while (continuationToken);
-
-      if (allImageKeys.length === 0) {
-        throw new Error('No valid images found in this event.');
-      }
-      
-      // Compare faces in larger batches with parallel processing
-      const batchSize = 70; // Reduced batch size for more frequent updates
-      const results: { url: string; similarity: number }[] = [];
-      let processedCount = 0;
-      let matchedCount = 0;
-      
-      for (let i = 0; i < allImageKeys.length; i += batchSize) {
-        const batch = allImageKeys.slice(i, i + batchSize);
-        processedCount += batch.length;
-        setProcessingStatus(`Processing images... ${processedCount}/${allImageKeys.length} (${matchedCount} matches found)`);
-        
-        const batchPromises = batch.map(async (imageKey) => {
-          try {
-            const compareCommand = new CompareFacesCommand({
-              SourceImage: {
-                S3Object: { Bucket: bucketName, Name: selfiePath },
-              },
-              TargetImage: {
-                S3Object: { Bucket: bucketName, Name: imageKey },
-              },
-              SimilarityThreshold: 80,
-              QualityFilter: "HIGH"
-            });
-            
-            // Add timeout to prevent hanging
-            const compareResponse = await Promise.race([
-              (await rekognitionClientPromise).send(compareCommand),
-              new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Face comparison timed out')), 30000)
-              )
-            ]) as { FaceMatches?: Array<{ Similarity?: number }> };
-            
-            if (compareResponse.FaceMatches && compareResponse.FaceMatches.length > 0) {
-              const bestMatch = compareResponse.FaceMatches.reduce(
-                (prev: { Similarity?: number }, current: { Similarity?: number }) => 
-                  (prev.Similarity || 0) > (current.Similarity || 0) ? prev : current
-              );
-              
-              const result = { 
-                url: `https://${bucketName}.s3.amazonaws.com/${imageKey}`, 
-                similarity: bestMatch.Similarity || 0 
-              };
-              
-              // Update UI immediately when a match is found with higher similarity threshold
-              if (result.similarity >= 70) {
-                const newMatchingImage: MatchingImage = {
-                  imageId: imageKey.split('/').pop() || '',
-                  eventId: event.id,
-                  eventName: event.name,
-                  imageUrl: result.url,
-                  matchedDate: new Date().toISOString()
-                };
-                
-                matchedCount++;
-                // Update UI with the new match immediately
-                setMatchingImages(prev => {
-                  // Check if this image is already in the list
-                  if (!prev.some(img => img.imageUrl === newMatchingImage.imageUrl)) {
-                    return [newMatchingImage, ...prev];
-                  }
-                  return prev;
-                });
-                
-                // Update processing status with new match count
-                setProcessingStatus(`Processing images... ${processedCount}/${allImageKeys.length} (${matchedCount} matches found)`);
-              }
-              
-              return result;
-            }
-            return null;
-          } catch (error) {
-            console.error(`Error processing image ${imageKey}:`, error);
-            return null;
-          }
-        });
-        
-        // Use Promise.allSettled to continue even if some comparisons fail
-        const batchResults = await Promise.allSettled(batchPromises);
-        const successfulResults = batchResults
-          .filter((result): result is PromiseFulfilledResult<{ url: string; similarity: number }> => 
-            result.status === 'fulfilled' && 
-            result.value !== null && 
-            typeof result.value === 'object' &&
-            'url' in result.value &&
-            'similarity' in result.value &&
-            result.value.similarity >= 70
-          )
-          .map(result => result.value);
-          
-        results.push(...successfulResults);
-      }
-      
-      // Sort matches by similarity
-      const sortedMatches = results.sort((a, b) => b.similarity - a.similarity);
-      
-      if (sortedMatches.length === 0) {
-        throw new Error('No matching faces found in the event images.');
-      }
-      
-      // Add this event to attended events if not already there
-      const eventExists = attendedEvents.some(e => e.eventId === event.id);
-      
-      if (!eventExists) {
-        const newEvent: Event = {
-          eventId: event.id,
-          eventName: event.name,
-          eventDate: event.date,
-          thumbnailUrl: event.coverImage || sortedMatches[0].url,
-          coverImage: event.coverImage || ''
-        };
-        
-        setAttendedEvents(prev => [newEvent, ...prev]);
-      }
-      
-      // Store the attendee image data in the database
-      const matchedImageUrls = sortedMatches.map(match => match.url);
-      const currentTimestamp = new Date().toISOString();
-      
-      const attendeeData = {
-        userId: userEmail,
-        eventId: event.id,
-        eventName: event.name,
-        coverImage: event.coverImage,
-        selfieURL: existingSelfieUrl,
-        matchedImages: matchedImageUrls,
-        uploadedAt: currentTimestamp,
-        lastUpdated: currentTimestamp
-      };
-      
-      // Store in the database
-      const storageResult = await storeAttendeeImageData(attendeeData);
-      
-      if (!storageResult) {
-        console.error('Failed to store attendee image data in the database');
-      }
-      
-      // Update statistics
-      await updateStatistics();
-      
-      // Set success message and filter to show only this event's images
-      setSuccessMessage(`Found ${sortedMatches.length} new photos from ${event.name}!`);
-      setSelectedEventFilter(event.id);
-      
-      // Clear event code and details since we're done processing
-      setEventCode('');
-      setEventDetails(null);
-      
-      setProcessingStatus(null);
-      setIsUploading(false);
-      
-    } catch (error: any) {
-      console.error('Error in comparison with existing selfie:', error);
-      setError(error.message || 'Error processing your request. Please try again.');
-      setIsUploading(false);
-      setProcessingStatus(null);
-    }
-  };
-
-  // New function to start the camera
-  const startCamera = async () => {
-    try {
-      const videoStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-      
-      setStream(videoStream);
-      setIsCameraActive(true);
-      
-      // Wait for the next render cycle to ensure video element exists
-      setTimeout(() => {
-        const videoElement = document.querySelector('video');
-        if (videoElement) {
-          videoElement.srcObject = videoStream;
-          videoElement.play().catch(console.error);
-          setVideoRef(videoElement);
-        }
-      }, 100);
-      
-    } catch (error) {
-      console.error('Error accessing camera:', error);
-      setError('Could not access camera. Please make sure you have granted camera permissions.');
-      setIsCameraActive(false);
-      setShowCameraModal(false);
-    }
-  };
-
-  // New function to stop the camera
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => {
-        track.stop();
-        track.enabled = false;
-      });
-      setStream(null);
-    }
-    if (videoRef && videoRef.srcObject) {
-      const tracks = (videoRef.srcObject as MediaStream).getTracks();
-      tracks.forEach(track => {
-        track.stop();
-        track.enabled = false;
-      });
-      videoRef.srcObject = null;
-    }
-    setVideoRef(null);
-    setIsCameraActive(false);
-  };
-
-  // New function to capture image from camera
-  const captureImage = async () => {
-    if (!videoRef || !stream) return;
-
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = videoRef.videoWidth;
-      canvas.height = videoRef.videoHeight;
-      
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Could not get canvas context');
-      ctx.drawImage(videoRef, 0, 0);
-      
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((blob) => {
-          if (blob) resolve(blob);
-        }, 'image/jpeg', 0.8);
-      });
-      
-      const cameraFile = new File([blob], 'selfie.jpg', { type: 'image/jpeg' });
-      
-      // Process the captured image
-      setSelfie(cameraFile);
-      setSelfiePreview(URL.createObjectURL(cameraFile));
-      
-      // Stop camera and cleanup
-      stopCamera();
-      
-      // Upload the captured selfie
-      await uploadSelfie(cameraFile);
-      
-      // Update statistics after selfie upload
-      await updateStatistics();
-      
-      // Close the modal
-      setShowCameraModal(false);
-      
-    } catch (error: any) {
-      console.error('Error capturing image:', error);
-      setError(error.message || 'Failed to capture image. Please try again.');
-      // Ensure camera is stopped even if capture fails
-      stopCamera();
-    }
+  // Add the sanitizeFilename utility function
+  const sanitizeFilename = (filename: string): string => {
+    // First, handle special cases like (1), (2), etc.
+    const hasNumberInParentheses = filename.match(/\(\d+\)$/);
+    const numberInParentheses = hasNumberInParentheses ? hasNumberInParentheses[0] : '';
+    
+    // Remove the number in parentheses from the filename for sanitization
+    const filenameWithoutNumber = filename.replace(/\(\d+\)$/, '');
+    
+    // Sanitize the main filename
+    const sanitized = filenameWithoutNumber
+      .replace(/[^a-zA-Z0-9_.\-:]/g, '_') // Replace invalid chars with underscore
+      .replace(/_{2,}/g, '_') // Replace multiple underscores with single underscore
+      .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
+    
+    // Add back the number in parentheses if it existed
+    return sanitized + numberInParentheses;
   };
 
   // New function to upload the selfie
@@ -884,8 +612,10 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
     try {
       const userEmail = localStorage.getItem('userEmail') || '';
       
-      // Generate a unique filename
-      const fileName = `selfie-${Date.now()}-${file.name}`;
+      // Generate a unique filename and sanitize it
+      const timestamp = Date.now();
+      const sanitizedFilename = sanitizeFilename(file.name);
+      const fileName = `selfie-${timestamp}-${sanitizedFilename}`;
       const selfiePath = `users/${userEmail}/selfies/${fileName}`;
       
       // Convert File to arrayBuffer and then to Uint8Array
@@ -958,197 +688,214 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
     }
   };
 
-  // Update user's selfie using camera
-  const handleUpdateSelfie = () => {
-    // Clear any previous errors
-    setError(null);
-    setSuccessMessage(null);
-    
-    // Show camera modal and start the camera
-    setShowCameraModal(true);
-    startCamera();
+  // New function to perform face comparison with existing selfie
+  const performFaceComparisonWithExistingSelfie = async (userEmail: string, existingSelfieUrl: string, event: any) => {
+    try {
+      setIsUploading(true);
+      setProcessingStatus('Comparing with event images...');
+      
+      // Extract the S3 key from the selfie URL
+      const { bucketName } = await validateEnvVariables();
+      let selfiePath = '';
+      
+      if (existingSelfieUrl.startsWith(`https://${bucketName}.s3.amazonaws.com/`)) {
+        selfiePath = existingSelfieUrl.substring(`https://${bucketName}.s3.amazonaws.com/`.length);
+      } else {
+        throw new Error('Could not determine S3 path for the existing selfie');
+      }
+      
+      // Search for matching faces in the event collection
+      const matches = await searchFacesByImage(event.id, selfiePath);
+
+      if (matches.length === 0) {
+        throw new Error('No matching faces found in the event images.');
+      }
+
+      // Convert matches to MatchingImage format
+      const matchingImages: MatchingImage[] = matches
+        .filter(match => match.similarity >= 70) // Only include high confidence matches
+        .map(match => {
+          // Get the filename from the match
+          const filename = match.imageKey.split('/').pop() || '';
+          // Construct the full S3 URL
+          const imageUrl = `https://${bucketName}.s3.amazonaws.com/events/shared/${event.id}/images/${filename}`;
+          
+          return {
+            imageId: filename,
+            eventId: event.id,
+            eventName: event.name,
+            imageUrl: imageUrl,
+            matchedDate: new Date().toISOString(),
+            similarity: match.similarity
+          };
+        });
+      
+      // Add this event to attended events if not already there
+      const eventExists = attendedEvents.some(e => e.eventId === event.id);
+      
+      if (!eventExists) {
+        const newEvent: Event = {
+          eventId: event.id,
+          eventName: event.name,
+          eventDate: event.date,
+          thumbnailUrl: event.coverImage || matchingImages[0]?.imageUrl || '',
+          coverImage: event.coverImage || ''
+        };
+        
+        setAttendedEvents(prev => [newEvent, ...prev]);
+      }
+      
+      // Store the attendee image data in the database
+      const matchedImageUrls = matchingImages.map(match => match.imageUrl);
+      const currentTimestamp = new Date().toISOString();
+      
+      const attendeeData = {
+        userId: userEmail,
+        eventId: event.id,
+        eventName: event.name,
+        coverImage: event.coverImage,
+        selfieURL: existingSelfieUrl,
+        matchedImages: matchedImageUrls,
+        uploadedAt: currentTimestamp,
+        lastUpdated: currentTimestamp
+      };
+      
+      // Store in the database
+      const storageResult = await storeAttendeeImageData(attendeeData);
+      
+      if (!storageResult) {
+        console.error('Failed to store attendee image data in the database');
+      }
+      
+      // Update statistics
+      await updateStatistics();
+      
+      // Set success message and filter to show only this event's images
+      setSuccessMessage(`Found ${matchingImages.length} new photos from ${event.name}!`);
+      setSelectedEventFilter(event.id);
+      setMatchingImages(matchingImages);
+      
+      // Clear event code and details since we're done processing
+      setEventCode('');
+      setEventDetails(null);
+      
+      setProcessingStatus(null);
+      setIsUploading(false);
+      
+    } catch (error: any) {
+      console.error('Error in comparison with existing selfie:', error);
+      setError(error.message || 'Error processing your request. Please try again.');
+      setIsUploading(false);
+      setProcessingStatus(null);
+    }
   };
 
-  // Clean up camera when component unmounts
-  useEffect(() => {
-    return () => {
-      stopCamera();
-    };
-  }, []);
+  // Camera control functions
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      setStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      setError('Could not access camera. Please make sure you have granted camera permissions.');
+    }
+  };
 
-  // Add cleanup when component is hidden or user navigates away
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  const captureImage = async () => {
+    if (!videoRef.current) return;
+
+      const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(videoRef.current, 0, 0);
+    canvas.toBlob(blob => {
+      if (blob) {
+        const file = new File([blob], 'selfie.jpg', { type: 'image/jpeg' });
+        setSelfie(file);
         stopCamera();
       }
-    };
+    }, 'image/jpeg');
+  };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('beforeunload', stopCamera);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('beforeunload', stopCamera);
-    };
-  }, []);
-
-  // Modify the handleSelfieChange to use handleUpdateSelfie instead
- 
-
-  // Clear selfie selection
   const clearSelfie = () => {
-    setSelfie(null);
-    if (selfiePreview) {
-      URL.revokeObjectURL(selfiePreview);
-    }
-    setSelfiePreview(null);
+    setSelfieImage(null);
+  };
+
+  const handleUpdateSelfie = () => {
+    clearSelfie();
+    startCamera();
   };
 
   // Upload selfie and compare faces
   const handleUploadAndCompare = async () => {
-    // Check for user authentication first
-    const userEmail = localStorage.getItem('userEmail');
-    const { bucketName } = await validateEnvVariables();
-    if (!userEmail) {
-      setError('Please sign in to access your photos from this event.');
-      // Store pendingAction for after sign in
-      localStorage.setItem('pendingAction', 'getPhotos');
-      // Store complete URL for redirect after sign in
-      localStorage.setItem('pendingRedirectUrl', window.location.href);
-      // Show sign in modal
-      setShowSignInModal(true);
+    if (!selectedEvent) {
+      alert('Please select an event first.');
       return;
     }
 
-    if (!selfie || !eventDetails) {
-      setError('Please select a selfie and enter a valid event code');
+    if (!selfieImage) {
+      alert('Please take or upload a selfie first.');
       return;
     }
     
-    setIsUploading(true);
+    setIsLoading(true);
+    setMatchingImages([]);
     setError(null);
-    setSuccessMessage(null);
-    setProcessingStatus('Uploading selfie...');
-    
+
     try {
-      // Fetch complete event details from database
-      const completeEventDetails = await getEventById(eventDetails.id);
-      
-      if (!completeEventDetails) {
-        throw new Error('Could not retrieve complete event details from database.');
-      }
-      
-      // Generate a unique filename
-      const fileName = `selfie-${Date.now()}-${selfie.name}`;
-      const selfiePath = `events/shared/${eventDetails.id}/selfies/${fileName}`;
-      
-      // Convert File to arrayBuffer and then to Uint8Array
-      const buffer = await selfie.arrayBuffer();
-      const uint8Array = new Uint8Array(buffer);
-      
       // Upload selfie to S3
-      const upload = new Upload({
-        client: await s3ClientPromise,
-        params: {
-          Bucket: bucketName,
-          Key: selfiePath,
-          Body: uint8Array,
-          ContentType: selfie.type,
-          ACL: 'public-read'
-        },
-        partSize: 1024 * 1024 * 5
-      });
-      
-      await upload.done();
-      
-      // After successful upload, start face comparison
-      setProcessingStatus('Comparing with event images...');
-      
-      // Get the list of images in the event
-      const imagesPath = `events/shared/${eventDetails.id}/images/`;
-      let allImageKeys: string[] = [];
-      let continuationToken: string | undefined;
+      const selfieKey = `events/shared/${selectedEvent}/selfies/${Date.now()}-${selfieImage.name}`;
+      const selfieUrl = await uploadSelfie(selfieImage);
 
-      do {
-        const listCommand = new ListObjectsV2Command({
-          Bucket: bucketName,
-          Prefix: imagesPath,
-          MaxKeys: 1000,
-          ContinuationToken: continuationToken
-        });
-        
-        const listResponse = await (await s3ClientPromise).send(listCommand);
-        
-        if (listResponse.Contents) {
-          const imageKeys = listResponse.Contents
-            .filter(item => item.Key && /\.(jpg|jpeg|png)$/i.test(item.Key!))
-            .map(item => item.Key!);
-          allImageKeys.push(...imageKeys);
-        }
-        
-        continuationToken = listResponse.NextContinuationToken;
-      } while (continuationToken);
+      // Search for matching faces in the event collection
+      const matches = await searchFacesByImage(selectedEvent, selfieKey);
 
-      if (allImageKeys.length === 0) {
-        throw new Error('No images found in this event.');
-      }
-      
-      // Get the uploaded selfie URL
-      const selfieUrl = `https://${bucketName}.s3.amazonaws.com/${selfiePath}`;
-      
-      // Compare faces with each image
-      const matchingImages: MatchingImage[] = [];
-      for (const imageKey of allImageKeys) {
-        const imageUrl = `https://${bucketName}.s3.amazonaws.com/${imageKey}`;
-        
-        try {
-          const result = await compareFaces(selfieUrl, imageUrl);
-          if (result) {
-            matchingImages.push({
-              imageId: imageKey.split('/').pop() || '',
-              eventId: eventDetails.id,
-              eventName: eventDetails.name,
-              imageUrl,
-              matchedDate: new Date().toISOString()
-            });
-          }
-        } catch (error) {
-          console.error('Error comparing faces:', error);
-          continue;
-        }
-      }
-      
-      if (matchingImages.length > 0) {
-        // Store the matching images for the user
-        const { storeAttendeeImageData } = await import('../config/attendeeStorage');
-        await storeAttendeeImageData({
-          userId: userEmail,
-          eventId: eventDetails.id,
-          eventName: eventDetails.name,
-          coverImage: completeEventDetails.coverImage,
-          selfieURL: selfieUrl,
-          matchedImages: matchingImages.map(img => img.imageUrl),
-          uploadedAt: new Date().toISOString(),
-          lastUpdated: new Date().toISOString()
-        });
-        
-        // Update statistics
-        await updateStatistics();
-        
-        // Update the UI
-        setMatchingImages(matchingImages);
-        setFilteredImages(matchingImages);
-        setSuccessMessage(`Found ${matchingImages.length} matching photos!`);
-      } else {
+      if (matches.length === 0) {
         setError('No matching photos found. Please try again with a different selfie.');
+        return;
       }
+
+      // Get the event details
+      const event = await getEventById(selectedEvent);
+      if (!event) {
+        throw new Error('Event not found');
+      }
+
+      // Convert matches to MatchingImage format
+      const matchingImages: MatchingImage[] = matches
+        .filter(match => match.similarity >= 70) // Only include high confidence matches
+        .map(match => ({
+          imageId: match.imageKey,
+          eventId: selectedEvent,
+          eventName: event.name,
+          imageUrl: `https://${process.env.REACT_APP_AWS_S3_BUCKET}.s3.amazonaws.com/${match.imageKey}`,
+          matchedDate: new Date().toISOString(),
+          similarity: match.similarity
+        }));
+
+        setMatchingImages(matchingImages);
+      setShowResults(true);
     } catch (error) {
-      console.error('Error in upload and compare:', error);
-      setError(error instanceof Error ? error.message : 'An error occurred while processing your request.');
+      console.error('Error finding matching photos:', error);
+      setError('An error occurred while finding matching photos. Please try again.');
     } finally {
-      setIsUploading(false);
-      setProcessingStatus(null);
+      setIsLoading(false);
     }
   };
 
@@ -1584,13 +1331,13 @@ console.log(`User ${userEmail} downloading image`);
           
           {filteredImages.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-              {filteredImages.map((image) => (
-                <div
-                  key={image.imageId}
-                  className="bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow border border-gray-200"
-                >
-                  <div 
-                    className="aspect-square relative cursor-pointer"
+              {filteredImages.map((image, idx) => {
+                // Create a unique key using the image URL and index to handle duplicates
+                const uniqueKey = `${image.eventId || 'noevent'}-${image.imageUrl}-${idx}`;
+                return (
+                  <div
+                    key={uniqueKey}
+                    className="relative group"
                     onClick={() => {
                       setSelectedImage(image);
                       toggleHeaderFooter(false);
@@ -1598,21 +1345,48 @@ console.log(`User ${userEmail} downloading image`);
                   >
                     <img
                       src={image.imageUrl}
-                      alt={`Matched photo from ${image.eventName}`}
-                      className="object-cover w-full h-full"
+                      alt={`Photo from ${image.eventName}`}
+                      className="w-full h-full object-cover rounded-lg"
                     />
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDownload(image.imageUrl);
                       }}
-                      className="absolute top-2 right-2 p-2 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
-                    >
-                      <Download className="h-4 w-4" />
+                          className="p-2 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors duration-200"
+                        >
+                          <Download className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Try native sharing first
+                            if (typeof navigator.share === 'function') {
+                              handleShare('', image.imageUrl, e);
+                            } else {
+                              // Fall back to custom share menu
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setShareMenu({
+                                isOpen: true,
+                                imageUrl: image.imageUrl,
+                                position: {
+                                  top: rect.top - 200,
+                                  left: rect.left - 200
+                                }
+                              });
+                            }
+                          }}
+                          className="p-2 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors duration-200"
+                        >
+                          <Share2 className="w-5 h-5" />
                     </button>
                   </div>
                 </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="text-center py-10">
