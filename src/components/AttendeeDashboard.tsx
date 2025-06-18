@@ -38,6 +38,19 @@ interface AttendeeDashboardProps {
   setShowSignInModal: (show: boolean) => void;
 }
 
+// Add helper function to deduplicate images
+const deduplicateImages = (images: MatchingImage[]): MatchingImage[] => {
+  const seen = new Set<string>();
+  return images.filter(image => {
+    const key = `${image.eventId}-${image.imageUrl}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+};
+
 const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModal }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -270,9 +283,9 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
     const existingImageUrls = new Set(matchingImages.map(img => img.imageUrl));
     const uniqueNewImages = newImages.filter(img => !existingImageUrls.has(img.imageUrl));
     
-    if (uniqueNewImages.length > 0) {
-      setMatchingImages(prev => [...uniqueNewImages, ...prev]);
-    }
+            if (uniqueNewImages.length > 0) {
+          setMatchingImages(prev => deduplicateImages([...uniqueNewImages, ...prev]));
+        }
     
     // Set filter to show only this event's images
     setSelectedEventFilter(event.id);
@@ -369,10 +382,12 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
               });
             }
             
-            // Update state - filter out any default entries
+            // Update state - filter out any default entries and deduplicate
             setAttendedEvents(eventsList.filter(event => event.eventId !== 'default'));
-            setMatchingImages(imagesList.filter(image => image.eventId !== 'default'));
-            setFilteredImages(imagesList.filter(image => image.eventId !== 'default')); // Initially show all images
+            const filteredImagesList = imagesList.filter(image => image.eventId !== 'default');
+            const deduplicatedImages = deduplicateImages(filteredImagesList);
+            setMatchingImages(deduplicatedImages);
+            setFilteredImages(deduplicatedImages); // Initially show all images
             
             // Set selfie URL to the most recent selfie
             const mostRecent = attendeeImageData.reduce((prev, current) => 
@@ -524,7 +539,7 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         const uniqueNewImages = newImages.filter(img => !existingImageUrls.has(img.imageUrl));
         
         if (uniqueNewImages.length > 0) {
-          setMatchingImages(prev => [...uniqueNewImages, ...prev]);
+          setMatchingImages(prev => deduplicateImages([...uniqueNewImages, ...prev]));
         }
         
         // Set filter to show only this event's images
@@ -770,10 +785,14 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
       // Update statistics
       await updateStatistics();
       
+      // Merge with existing images and deduplicate
+      const allImages = [...matchingImages, ...filteredImages];
+      const deduplicatedImages = deduplicateImages(allImages);
+      
       // Set success message and filter to show only this event's images
       setSuccessMessage(`Found ${matchingImages.length} new photos from ${event.name}!`);
       setSelectedEventFilter(event.id);
-      setMatchingImages(matchingImages);
+      setMatchingImages(deduplicatedImages);
       
       // Clear event code and details since we're done processing
       setEventCode('');
