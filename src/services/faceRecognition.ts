@@ -179,6 +179,38 @@ export const indexFaces = async (eventId: string, imageKey: string): Promise<str
     console.log(`[DEBUG] faceRecognition.ts: Original filename: ${filename}`);
     console.log(`[DEBUG] faceRecognition.ts: Sanitized filename: ${sanitizedFilename}`);
 
+    // Check if this image has already been indexed by searching for existing faces with this ExternalImageId
+    try {
+      const searchCommand = new SearchFacesByImageCommand({
+        CollectionId: `event-${eventId}`,
+        Image: {
+          S3Object: {
+            Bucket: bucketName,
+            Name: imageKey
+          }
+        },
+        MaxFaces: 1,
+        FaceMatchThreshold: 95 // Very high threshold to find exact matches
+      });
+      
+      const searchResponse = await rekognitionClient.send(searchCommand);
+      
+      // If we find matches with the same ExternalImageId, this image is already indexed
+      if (searchResponse.FaceMatches && searchResponse.FaceMatches.length > 0) {
+        const existingFaces = searchResponse.FaceMatches.filter(
+          match => match.Face?.ExternalImageId === sanitizedFilename
+        );
+        
+        if (existingFaces.length > 0) {
+          console.log(`[DEBUG] faceRecognition.ts: Image ${imageKey} already indexed with ${existingFaces.length} faces`);
+          return existingFaces.map(face => face.Face?.FaceId || '').filter(id => id);
+        }
+      }
+    } catch (searchError: any) {
+      // If search fails (e.g., collection doesn't exist), continue with indexing
+      console.log(`[DEBUG] faceRecognition.ts: Could not search existing faces (${searchError.message}), proceeding with indexing`);
+    }
+
     // First verify if the file exists in S3 using the original key
     try {
       const s3Client = await s3ClientPromise;
@@ -251,61 +283,132 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
 
     console.log(`[DEBUG] faceRecognition.ts: Searching faces for selfie ${selfieImageKey} in bucket ${bucketName}`);
 
-    const command = new SearchFacesByImageCommand({
-      CollectionId: `event-${eventId}`,
-      Image: {
-        S3Object: {
-          Bucket: bucketName,
-          Name: selfieImageKey
-        }
-      },
-      MaxFaces: 50,
-      FaceMatchThreshold: 60
-    });
-
-    const response = await rekognitionClient.send(command);
-    const matches = response.FaceMatches?.map(match => {
-      // Get the sanitized filename from ExternalImageId
-      const sanitizedFilename = match.Face?.ExternalImageId || '';
-      
-      // Convert back to original filename format but replace spaces with underscores
-      // First, replace underscores with spaces
-      let originalFilename = sanitizedFilename.replace(/_/g, ' ');
-      
-      // Handle special cases like (1), (2), etc.
-      // If the filename contains a number in parentheses at the end, ensure it's properly formatted
-      originalFilename = originalFilename.replace(/_(\d+)_$/, ' ($1)');
-      
-      // Replace spaces with underscores
-      originalFilename = originalFilename.replace(/\s+/g, '_');
-      
-      // Construct the full path including the event structure
-      const fullImageKey = `events/shared/${eventId}/images/${originalFilename}`;
-      
-      console.log(`[DEBUG] faceRecognition.ts: Converting filename:`, {
-        sanitized: sanitizedFilename,
-        original: originalFilename,
-        fullKey: fullImageKey
+    // Try to search in the collection first
+    try {
+      const command = new SearchFacesByImageCommand({
+        CollectionId: `event-${eventId}`,
+        Image: {
+          S3Object: {
+            Bucket: bucketName,
+            Name: selfieImageKey
+          }
+        },
+        MaxFaces: 50,
+        FaceMatchThreshold: 60 // Minimum similarity threshold
       });
+
+      const response = await rekognitionClient.send(command);
       
-      return {
-        imageKey: fullImageKey,
-        similarity: match.Similarity || 0
-      };
-    }) || [];
+      // Create a map to store the best match for each unique image
+      const uniqueImageMatches = new Map<string, { imageKey: string; similarity: number }>();
 
-    // Enhanced logging for matches
-    console.log(`[DEBUG] faceRecognition.ts: Found ${matches.length} face matches for selfie ${selfieImageKey}`);
-    matches.forEach((match, index) => {
-      console.log(`[DEBUG] faceRecognition.ts: Match ${index + 1}:`);
-      console.log(`[DEBUG] faceRecognition.ts: - Image: ${match.imageKey || 'No image key found'}`);
-      console.log(`[DEBUG] faceRecognition.ts: - Similarity: ${match.similarity.toFixed(2)}%`);
-      if (!match.imageKey) {
-        console.log(`[DEBUG] faceRecognition.ts: - Face ID: ${response.FaceMatches?.[index]?.Face?.FaceId || 'No face ID'}`);
+      // Process each face match
+      response.FaceMatches?.forEach(match => {
+        if (!match.Face?.ExternalImageId) return;
+
+        // Get the sanitized filename from ExternalImageId
+        const sanitizedFilename = match.Face.ExternalImageId;
+        
+        // Convert back to original filename format
+        let originalFilename = sanitizedFilename
+          .replace(/_/g, ' ') // Replace underscores with spaces
+          .replace(/\s*\((\d+)\)\s*$/, ' ($1)') // Fix number in parentheses format
+          .trim() // Remove any leading/trailing spaces
+          .replace(/\s+/g, '_'); // Replace spaces with underscores
+        
+        // Construct the full path
+        const fullImageKey = `events/shared/${eventId}/images/${originalFilename}`;
+        
+        // Calculate normalized similarity score (0-100)
+        const similarity = Math.round(match.Similarity || 0);
+        
+        // Check if we already have a match for this image
+        const existingMatch = uniqueImageMatches.get(fullImageKey);
+        
+        // Only update if this match has a higher similarity score
+        if (!existingMatch || similarity > existingMatch.similarity) {
+          uniqueImageMatches.set(fullImageKey, {
+            imageKey: fullImageKey,
+            similarity: similarity
+          });
+          
+          console.log(`[DEBUG] faceRecognition.ts: Updated match for ${fullImageKey}:`, {
+            similarity: similarity,
+            previousSimilarity: existingMatch?.similarity
+          });
+        }
+      });
+
+      // Convert map to array and sort by similarity (highest first)
+      const matches = Array.from(uniqueImageMatches.values())
+        .sort((a, b) => b.similarity - a.similarity)
+        .filter(match => match.similarity >= 60); // Additional filter for minimum confidence
+
+      // Log the final results
+      console.log(`[DEBUG] faceRecognition.ts: Found ${matches.length} unique images with faces matching the selfie`);
+      matches.forEach((match, index) => {
+        console.log(`[DEBUG] faceRecognition.ts: Match ${index + 1}:`, {
+          image: match.imageKey.split('/').pop(),
+          similarity: `${match.similarity}%`
+        });
+      });
+
+      return matches;
+
+    } catch (error: any) {
+      // If collection doesn't exist, create it and index all images
+      if (error.name === 'ResourceNotFoundException') {
+        console.log(`[DEBUG] faceRecognition.ts: Collection doesn't exist for event ${eventId}, creating and indexing images...`);
+        
+        // Create collection and index all images
+        const indexResult = await indexAllEventImages(eventId);
+        
+        if (indexResult.successful.length === 0) {
+          throw new Error('No images were successfully indexed for this event.');
+        }
+
+        // Now try the search again with the same deduplication logic
+        const retryCommand = new SearchFacesByImageCommand({
+          CollectionId: `event-${eventId}`,
+          Image: {
+            S3Object: {
+              Bucket: bucketName,
+              Name: selfieImageKey
+            }
+          },
+          MaxFaces: 50,
+          FaceMatchThreshold: 60
+        });
+
+        const retryResponse = await rekognitionClient.send(retryCommand);
+        
+        // Use the same deduplication logic for retry
+        const uniqueRetryMatches = new Map<string, { imageKey: string; similarity: number }>();
+        
+        retryResponse.FaceMatches?.forEach(match => {
+          if (!match.Face?.ExternalImageId) return;
+          
+          const fullImageKey = `events/shared/${eventId}/images/${match.Face.ExternalImageId}`;
+          const similarity = Math.round(match.Similarity || 0);
+          
+          const existingMatch = uniqueRetryMatches.get(fullImageKey);
+          if (!existingMatch || similarity > existingMatch.similarity) {
+            uniqueRetryMatches.set(fullImageKey, {
+              imageKey: fullImageKey,
+              similarity: similarity
+            });
+          }
+        });
+
+        // Convert map to array and sort by similarity
+        return Array.from(uniqueRetryMatches.values())
+          .sort((a, b) => b.similarity - a.similarity)
+          .filter(match => match.similarity >= 60);
       }
-    });
-
-    return matches;
+      
+      // For other errors, throw them
+      throw error;
+    }
   } catch (error: any) {
     console.error('[ERROR] faceRecognition.ts: Failed to search faces:', {
       error: error.message,

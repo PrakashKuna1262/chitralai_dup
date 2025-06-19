@@ -1,11 +1,24 @@
-import React from 'react';
+import { useLocation } from 'react-router-dom';
 
 const Footer = () => {
+  const location = useLocation();
+  const isLandingPage = location.pathname === '/';
+
   return (
     <footer className="bg-white border-t mt-auto">
       <div className="mx-auto max-w-7xl px-6 py-6 md:flex md:items-center md:justify-between lg:px-8">
         <div className="flex flex-col space-y-2 md:order-1 md:mt-0">
           <p className="text-center md:text-left text-xs leading-5 text-gray-900">&copy; 2025 Chitralai. All rights reserved.</p>
+          {isLandingPage && (
+            <div className="flex flex-col space-y-1 text-center md:text-left">
+              <p className="text-xs text-blue-500">
+                <a href="/terms" className="hover:underline">Terms & Conditions</a>
+              </p>
+              <p className="text-xs text-blue-500">
+                <a href="/privacy" className="hover:underline">Privacy Policy</a>
+              </p>
+            </div>
+          )}
           <div className="flex flex-col md:flex-row md:space-x-4 items-center md:items-start">
             <a href="mailto:chitralai.in@gmail.com" className="flex items-center text-sm text-gray-700 hover:text-gray-900">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">

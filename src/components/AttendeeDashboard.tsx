@@ -1356,24 +1356,26 @@ console.log(`User ${userEmail} downloading image`);
                 return (
                   <div
                     key={uniqueKey}
-                    className="relative group"
+                    className="relative group aspect-square cursor-pointer"
                     onClick={() => {
                       setSelectedImage(image);
                       toggleHeaderFooter(false);
                     }}
                   >
-                    <img
-                      src={image.imageUrl}
-                      alt={`Photo from ${image.eventName}`}
-                      className="w-full h-full object-cover rounded-lg"
-                    />
+                    <div className="absolute inset-0 rounded-lg overflow-hidden">
+                      <img
+                        src={image.imageUrl}
+                        alt={`Photo from ${image.eventName}`}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
                       <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDownload(image.imageUrl);
-                      }}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownload(image.imageUrl);
+                          }}
                           className="p-2 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors duration-200"
                         >
                           <Download className="w-5 h-5" />
@@ -1400,9 +1402,9 @@ console.log(`User ${userEmail} downloading image`);
                           className="p-2 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors duration-200"
                         >
                           <Share2 className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
