@@ -836,18 +836,28 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
   const captureImage = async () => {
     if (!videoRef.current) return;
 
-      const canvas = document.createElement('canvas');
+    const canvas = document.createElement('canvas');
     canvas.width = videoRef.current.videoWidth;
     canvas.height = videoRef.current.videoHeight;
-      const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     ctx.drawImage(videoRef.current, 0, 0);
-    canvas.toBlob(blob => {
+    canvas.toBlob(async (blob) => {
       if (blob) {
         const file = new File([blob], 'selfie.jpg', { type: 'image/jpeg' });
         setSelfie(file);
         stopCamera();
+        setShowCameraModal(false); // Close the camera modal
+        setIsCameraActive(false);
+
+        try {
+          // Upload the selfie and update database
+          await uploadSelfie(file);
+        } catch (error: any) {
+          console.error('Error uploading selfie:', error);
+          setError(error.message || 'Failed to upload selfie. Please try again.');
+        }
       }
     }, 'image/jpeg');
   };
@@ -858,7 +868,9 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
 
   const handleUpdateSelfie = () => {
     clearSelfie();
-    startCamera();
+    setShowCameraModal(true); // Open the camera modal first
+    setIsCameraActive(true); // Set camera as active
+    startCamera(); // Then start the camera
   };
 
   // Upload selfie and compare faces
@@ -1578,6 +1590,7 @@ console.log(`User ${userEmail} downloading image`);
               {isCameraActive && (
                 <div className="mb-4">
                   <video
+                    ref={videoRef}
                     autoPlay
                     playsInline
                     className="w-full rounded-lg border-2 border-blue-500"
