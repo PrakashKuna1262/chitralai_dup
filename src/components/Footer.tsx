@@ -1,4 +1,4 @@
-import { useLocation } from 'react-router-dom';
+import { useLocation, Link } from 'react-router-dom';
 
 const Footer = () => {
   const location = useLocation();
@@ -12,10 +12,10 @@ const Footer = () => {
           {isLandingPage && (
             <div className="flex flex-col space-y-1 text-center md:text-left">
               <p className="text-xs text-blue-500">
-                <a href="/terms" className="hover:underline">Terms & Conditions</a>
+                <Link to="/terms" className="hover:underline">Terms & Conditions</Link>
               </p>
               <p className="text-xs text-blue-500">
-                <a href="/privacy" className="hover:underline">Privacy Policy</a>
+                <Link to="/privacy" className="hover:underline">Privacy Policy</Link>
               </p>
             </div>
           )}

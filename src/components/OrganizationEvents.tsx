@@ -2,9 +2,9 @@ import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, ImageIcon, ArrowLeft } from 'lucide-react';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
-import { CompareFacesCommand } from '@aws-sdk/client-rekognition';
-import { s3ClientPromise, rekognitionClientPromise, validateEnvVariables } from '../config/aws';
+import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { getEventsViaUserByOrgCode, storeAttendeeImageData, getAttendeeSelfieURL, getMatchedImages } from '../config/dynamodb';
+import { searchFacesByImage } from '../services/faceRecognition';
 import { UserContext } from '../App';
 
 interface Event {
@@ -86,93 +86,22 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       } else {
         throw new Error('Invalid selfie format. Please update your selfie first.');
       }
-      
-      // Get the list of images in the event
-      const imagesPath = `events/shared/${event.id}/images/`;
-      let allImageKeys: string[] = [];
-      let continuationToken: string | undefined;
 
-      do {
-        const listCommand = new ListObjectsV2Command({
-          Bucket: bucketName,
-          Prefix: imagesPath,
-          MaxKeys: 1000,
-          ContinuationToken: continuationToken
-        });
-        
-        const listResponse = await (await s3ClientPromise).send(listCommand);
-        
-        if (listResponse.Contents) {
-          const imageKeys = listResponse.Contents
-            .filter(item => item.Key && /\.(jpg|jpeg|png)$/i.test(item.Key!))
-            .map(item => item.Key!);
-          allImageKeys.push(...imageKeys);
-        }
-        
-        continuationToken = listResponse.NextContinuationToken;
-      } while (continuationToken);
+      // Use searchFacesByImage to find matches
+      const matches = await searchFacesByImage(event.id, selfiePath);
+      
+      if (matches.length === 0) {
+        throw new Error('No matching photos found in this event.');
+      }
 
-      if (allImageKeys.length === 0) {
-        throw new Error('No images found in this event.');
-      }
-      
-      // Compare faces in batches
-      const batchSize = 70;
-      const results: { url: string; similarity: number }[] = [];
-      let processedCount = 0;
-      let matchedCount = 0;
-      
-      for (let i = 0; i < allImageKeys.length; i += batchSize) {
-        const batch = allImageKeys.slice(i, i + batchSize);
-        const batchPromises = batch.map(async (targetKey) => {
-          try {
-            const compareCommand = new CompareFacesCommand({
-              SourceImage: {
-                S3Object: {
-                  Bucket: bucketName,
-                  Name: selfiePath
-                }
-              },
-              TargetImage: {
-                S3Object: {
-                  Bucket: bucketName,
-                  Name: targetKey
-                }
-              },
-              SimilarityThreshold: 80
-            });
-            
-            const compareResponse = await (await rekognitionClientPromise).send(compareCommand);
-            
-            if (compareResponse.FaceMatches && compareResponse.FaceMatches.length > 0) {
-              const imageUrl = `https://${bucketName}.s3.amazonaws.com/${targetKey}`;
-              const similarity = compareResponse.FaceMatches[0].Similarity || 0;
-              return { url: imageUrl, similarity };
-            }
-            return null;
-          } catch (error) {
-            console.error('Error comparing faces:', error);
-            return null;
-          }
-        });
-        
-        const batchResults = await Promise.all(batchPromises);
-        const validResults = batchResults.filter((result): result is { url: string; similarity: number } => result !== null);
-        results.push(...validResults);
-        
-        processedCount += batch.length;
-        matchedCount += validResults.length;
-        setProcessingStatus(`Found ${matchedCount} photos (${Math.round((processedCount / allImageKeys.length) * 100)}% complete)...`);
-      }
-      
-      // Store the matched images in DynamoDB
+      // Store the matched images in DynamoDB with just the S3 paths
       await storeAttendeeImageData({
         userId: userEmail,
         eventId: event.id,
         eventName: event.name,
         coverImage: event.coverImage,
         selfieURL: selfieUrl,
-        matchedImages: results.map(r => r.url),
+        matchedImages: matches.map(match => match.imageKey),
         uploadedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString()
       });

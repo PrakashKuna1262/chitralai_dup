@@ -144,6 +144,14 @@ const Terms = () => {
             <h2 className="text-xl font-semibold mb-4">17. Service Availability</h2>
             <p>We aim to provide uninterrupted services but cannot guarantee 100% uptime. Temporary outages may occur due to updates, maintenance, or technical issues. Chitralai will not be held responsible for such interruptions.</p>
           </section>
+          <div className="mt-12 pt-6 border-t border-gray-200">
+          <Link to="/" className="text-blue-600 hover:underline flex items-center">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Back to Home
+          </Link>
+        </div>
         </div>
       </div>
     </div>

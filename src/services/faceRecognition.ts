@@ -120,7 +120,7 @@ export const indexFacesBatch = async (
           
           const faceIds = await indexFaces(eventId, imageKey);
           successful.push(imageKey);
-          console.log(`[DEBUG] faceRecognition.ts: Successfully indexed ${faceIds.length} faces for ${imageKey}`);
+          
           return;
           
         } catch (error: any) {
@@ -236,7 +236,7 @@ export const indexFaces = async (eventId: string, imageKey: string): Promise<str
         }
       },
       MaxFaces: 100,
-      QualityFilter: 'AUTO',
+      QualityFilter: 'NONE',
       DetectionAttributes: ['ALL'],
       ExternalImageId: sanitizedFilename
     });
@@ -245,9 +245,7 @@ export const indexFaces = async (eventId: string, imageKey: string): Promise<str
     const faceIds = response.FaceRecords?.map(record => record.Face?.FaceId || '') || [];
     
     console.log(`[DEBUG] faceRecognition.ts: Successfully indexed ${faceIds.length} faces for image ${imageKey}`);
-    if (faceIds.length > 0) {
-      console.log(`[DEBUG] faceRecognition.ts: Face IDs:`, faceIds);
-    }
+    
     
     // Log any faces that were detected but not indexed
     if (response.UnindexedFaces && response.UnindexedFaces.length > 0) {
