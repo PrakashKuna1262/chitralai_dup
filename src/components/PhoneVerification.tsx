@@ -202,7 +202,7 @@ const PhoneVerification: React.FC<PhoneVerificationProps> = ({
             useOneTap={false}
             type="standard"
             theme="outline"
-            text="continue_with"
+            text="signin_with"
             shape="rectangular"
             logo_alignment="left"
           />

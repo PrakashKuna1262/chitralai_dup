@@ -39,7 +39,7 @@ const GoogleLogin: React.FC<GoogleLoginProps> = ({ onSuccess, onError }) => {
       if (!existingUser) {
         // Create new user with role as organizer if pendingAction is createEvent, otherwise attendee
         await storeUserCredentials({
-          userId: decoded.email, // Always use email as userId for consistency
+          userId: decoded.sub,
           email: decoded.email,
           name: decoded.name,
           mobile: phoneNumber, // Use the phone number from the form
@@ -48,7 +48,7 @@ const GoogleLogin: React.FC<GoogleLoginProps> = ({ onSuccess, onError }) => {
       } else if (pendingAction === 'createEvent') {
         // If user exists but they're creating an event, update their role
         await storeUserCredentials({
-          userId: decoded.email, // Always use email as userId for consistency
+          userId: decoded.sub,
           email: decoded.email,
           name: decoded.name,
           mobile: existingUser.mobile || phoneNumber, // Keep existing phone or use new one
@@ -79,12 +79,6 @@ const GoogleLogin: React.FC<GoogleLoginProps> = ({ onSuccess, onError }) => {
           onSuccess={handleSuccess}
           onError={handleError}
           useOneTap
-          theme="outline"
-          size="large"
-          text="continue_with"
-          shape="rectangular"
-          width="100%"
-          logo_alignment="left"
         />
       </div>
     </div>

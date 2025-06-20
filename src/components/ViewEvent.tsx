@@ -396,111 +396,143 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     }
   };
 
-  // Function to get shareable links for images
-  const getShareableLinks = async (selectedKeys: Set<string>): Promise<string[]> => {
-    const { bucketName } = await validateEnvVariables();
-    const s3Client = await s3ClientPromise;
-    
-    const links = await Promise.all(
-      Array.from(selectedKeys).map(async (key) => {
-        try {
-          const command = new GetObjectCommand({
-            Bucket: bucketName,
-            Key: key,
-            ResponseContentDisposition: 'inline' // This makes the browser display the image instead of downloading
-          });
-          
-          // Generate a presigned URL that's valid for 1 hour
-          return await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-        } catch (error) {
-          console.error('Error generating shareable link:', error);
-          return null;
-        }
-      })
-    );
-    
-    return links.filter((link): link is string => link !== null);
-  };
-
   // Handler for sharing selected images
   const handleShareSelected = async () => {
     if (selectedForShare.size === 0) return;
-    
     setSharing(true);
     
     try {
-      // Get shareable links for the selected images
-      const shareableLinks = await getShareableLinks(selectedForShare);
+      const { bucketName } = await validateEnvVariables();
+      const s3Client = await s3ClientPromise;
       
-      if (shareableLinks.length === 0) {
-        throw new Error('No shareable links could be generated');
-      }
+      // Get signed URLs for the selected images (without forcing download)
+      const imagePromises = Array.from(selectedForShare).map(async (key) => {
+        const command = new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key
+        });
+        
+        // Generate a presigned URL that's valid for 1 hour
+        const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+        const response = await fetch(signedUrl);
+        if (!response.ok) throw new Error(`Failed to fetch ${key}`);
+        const blob = await response.blob();
+        const filename = key.split('/').pop() || `photo-${Date.now()}.jpg`;
+        return new File([blob], filename, { type: blob.type || 'image/jpeg' });
+      });
+
+      const imageFiles = await Promise.all(imagePromises);
       
-      // Create a simple HTML content with image previews and links
-      const shareText = `Check out these photos from ${eventName}:\n\n`;
-      const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #1a365d;">Photos from ${eventName}</h2>
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 20px;">
-            ${shareableLinks.map(link => `
-              <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
-                <img src="${link}" style="width: 100%; height: 150px; object-fit: cover;" alt="Event photo">
-                <div style="padding: 8px; text-align: center;">
-                  <a href="${link}" style="color: #3182ce; text-decoration: none; font-size: 14px;" target="_blank" rel="noopener noreferrer">
-                    View Full Size
-                  </a>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-          <p style="margin-top: 20px; color: #4a5568; font-size: 14px;">
-            Shared via Chitra Photo Sharing App
-          </p>
-        </div>
-      `;
+      // Create share data with files
+      const shareData = {
+        title: `Photos from ${eventName}`,
+        text: `Check out these photos from ${eventName}`,
+        files: imageFiles
+      };
       
-      // Try Web Share API first (for mobile devices)
-      if (navigator.share) {
+      // Try Web Share API with files if supported
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: imageFiles })) {
         try {
-          await navigator.share({
-            title: `Photos from ${eventName}`,
-            text: shareText,
-            url: shareableLinks[0],
-            html: htmlContent
-          });
-          setSelectedForShare(new Set());
-          setShareMode(false);
-          return;
-        } catch (err) {
+          await navigator.share(shareData);
+        } catch (err: any) {
           if (err.name !== 'AbortError') {
-            console.error('Error sharing with Web Share API:', err);
-            // Continue to fallback methods if Web Share API fails
-          } else {
-            // User cancelled the share
-            return;
+            console.error('Error sharing files:', err);
+            throw err; // Rethrow to be caught by the outer catch
           }
         }
+      } else {
+        // Fallback for browsers that don't support sharing files
+        // Create a temporary container for the share UI
+        const shareContainer = document.createElement('div');
+        shareContainer.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        shareContainer.innerHTML = `
+          <div class="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 class="text-lg font-semibold mb-4">Share Options</h3>
+            <p class="mb-4">Your browser doesn't support direct sharing of multiple files. Please use one of these options:</p>
+            <div class="grid grid-cols-2 gap-4">
+              <button id="copy-links" class="p-3 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                Copy Links
+              </button>
+              <button id="download-zip" class="p-3 bg-green-100 text-green-700 rounded hover:bg-green-200">
+                Download All
+              </button>
+            </div>
+            <div class="mt-4 flex justify-end">
+              <button id="cancel-share" class="px-4 py-2 text-gray-600 hover:text-gray-800">
+                Cancel
+              </button>
+            </div>
+          </div>
+        `;
+        
+        document.body.appendChild(shareContainer);
+        
+        // Set up event listeners for the share options
+        return new Promise<void>((resolve) => {
+          const copyLinksBtn = shareContainer.querySelector('#copy-links');
+          const downloadZipBtn = shareContainer.querySelector('#download-zip');
+          const cancelBtn = shareContainer.querySelector('#cancel-share');
+          
+          const cleanup = () => {
+            document.body.removeChild(shareContainer);
+            setSelectedForShare(new Set());
+            setShareMode(false);
+            setSharing(false);
+            resolve();
+          };
+          
+          if (copyLinksBtn) {
+            copyLinksBtn.addEventListener('click', async () => {
+              const urls = imageFiles.map(file => URL.createObjectURL(file));
+              await navigator.clipboard.writeText(urls.join('\n'));
+              alert('Image links copied to clipboard!');
+              cleanup();
+            });
+          }
+          
+          if (downloadZipBtn) {
+            downloadZipBtn.addEventListener('click', async () => {
+              const JSZip = (await import('jszip')).default;
+              const zip = new JSZip();
+              const imgFolder = zip.folder('photos');
+              
+              if (imgFolder) {
+                imageFiles.forEach((file, index) => {
+                  imgFolder.file(`photo-${index + 1}.jpg`, file);
+                });
+                
+                const content = await zip.generateAsync({ type: 'blob' });
+                const url = URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `photos-${eventName}-${new Date().toISOString().split('T')[0]}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                cleanup();
+              }
+            });
+          }
+          
+          if (cancelBtn) {
+            cancelBtn.addEventListener('click', cleanup);
+          }
+          
+          // Close when clicking outside the modal
+          shareContainer.addEventListener('click', (e) => {
+            if (e.target === shareContainer) {
+              cleanup();
+            }
+          });
+        });
       }
       
-      // Fallback 1: Copy links to clipboard
-      try {
-        await navigator.clipboard.writeText(shareText + shareableLinks.join('\n'));
-        alert('Image links have been copied to your clipboard!');
-        setSelectedForShare(new Set());
-        setShareMode(false);
-        return;
-      } catch (clipboardErr) {
-        console.error('Failed to copy to clipboard:', clipboardErr);
-      }
-      
-      // Fallback 2: Open mail client
-      const subject = encodeURIComponent(`Photos from ${eventName}`);
-      const body = encodeURIComponent(shareText + shareableLinks.join('\n\n'));
-      window.open(`mailto:?subject=${subject}&body=${body}`);
-      
+      setSelectedForShare(new Set());
+      setShareMode(false);
     } catch (err) {
       console.error('Error sharing images:', err);
-      alert('Failed to share images. You can manually copy the image URLs from the download links.');
+      alert('Failed to share images. Please try again.');
     } finally {
       setSharing(false);
     }
