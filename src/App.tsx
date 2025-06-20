@@ -20,6 +20,8 @@ import MyOrganizations from './components/MyOrganizations';
 import { queryUserByEmail, storeUserCredentials } from './config/dynamodb';
 import { migrateLocalStorageToDb } from './config/eventStorage';
 import Login from './components/Login';
+import Terms from './pages/Terms';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 
 // Create a user context to manage authentication state
 export const UserContext = createContext<{
@@ -144,6 +146,8 @@ const App = () => {
               
               <Route path="/view-event/:eventId" element={<div className="animate-slideIn"><ViewEventWrapper /></div>} />
               <Route path="/my-organizations" element={<MyOrganizations />} />
+              <Route path="/terms" element={<div className="animate-slideIn"><Terms /></div>} />
+              <Route path="/privacy" element={<div className="animate-slideIn"><PrivacyPolicy /></div>} />
             </Routes>
             <Footer />
           </div>
