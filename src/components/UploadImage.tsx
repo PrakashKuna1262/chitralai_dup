@@ -6,7 +6,6 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getUserEvents, getEventById, updateEventData, convertToAppropriateUnit, addSizes, formatSize } from '../config/eventStorage';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
-import { createCollection, indexFaces, indexFacesBatch } from '../services/faceRecognition';
 
 
 // Add type declaration for directory upload attributes
@@ -56,9 +55,7 @@ const UPLOAD_ERROR_TYPES = {
   NETWORK: 'NETWORK_ERROR',
   TIMEOUT: 'TIMEOUT_ERROR',
   S3_ERROR: 'S3_ERROR',
-  UNKNOWN: 'UNKNOWN_ERROR',
-  INVALID_FILE_TYPE: 'INVALID_FILE_TYPE',
-  FILE_TOO_LARGE: 'FILE_TOO_LARGE'
+  UNKNOWN: 'UNKNOWN_ERROR'
 } as const;
 
 type UploadErrorType = typeof UPLOAD_ERROR_TYPES[keyof typeof UPLOAD_ERROR_TYPES];
@@ -108,24 +105,6 @@ const getPresignedUrl = async (key: string, contentType: string): Promise<string
   return data.url;
 };
 
-const sanitizeFilename = (filename: string): string => {
-  // First, handle special cases like (1), (2), etc.
-  const hasNumberInParentheses = filename.match(/\(\d+\)$/);
-  const numberInParentheses = hasNumberInParentheses ? hasNumberInParentheses[0] : '';
-  
-  // Remove the number in parentheses from the filename for sanitization
-  const filenameWithoutNumber = filename.replace(/\(\d+\)$/, '');
-  
-  // Sanitize the main filename
-  const sanitized = filenameWithoutNumber
-    .replace(/[^a-zA-Z0-9_.\-:]/g, '_') // Replace invalid chars with underscore
-    .replace(/_{2,}/g, '_') // Replace multiple underscores with single underscore
-    .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
-  
-  // Add back the number in parentheses if it existed
-  return sanitized + numberInParentheses;
-};
-
 const UploadImage = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -142,12 +121,7 @@ const UploadImage = () => {
   const [selectedEvent, setSelectedEvent] = useState<string>('');
   const [showQRModal, setShowQRModal] = useState(false);
   const [showCopySuccess, setShowCopySuccess] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ 
-    current: number; 
-    total: number; 
-    status?: string; 
-    currentFile?: string; 
-  } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
   const [eventCode, setEventCode] = useState<string>('');
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
   const [authorizationMessage, setAuthorizationMessage] = useState<string>('');
@@ -507,108 +481,101 @@ const UploadImage = () => {
     lastError: Error | null = null
   ): Promise<string> => {
     try {
-      // Sanitize the filename before upload
-      const sanitizedFileName = sanitizeFilename(fileName);
-      console.log('[DEBUG] UploadImage.tsx: Uploading with retry:', {
-        originalName: fileName,
-        sanitizedName: sanitizedFileName,
-        retryCount
-      });
-
       // Validate file before attempting upload
       if (!file.type.startsWith('image/')) {
         const error: UploadError = {
-          type: UPLOAD_ERROR_TYPES.INVALID_FILE_TYPE,
-          message: 'Only image files are allowed',
+          type: UPLOAD_ERROR_TYPES.VALIDATION,
+          message: 'Not a valid image file',
+          details: { fileType: file.type },
           timestamp: Date.now()
         };
-        uploadErrorTracker.addError(sanitizedFileName, error);
+        uploadErrorTracker.addError(fileName, error);
         throw new Error(error.message);
       }
 
-      // Check file size
       if (file.size > MAX_FILE_SIZE) {
         const error: UploadError = {
-          type: UPLOAD_ERROR_TYPES.FILE_TOO_LARGE,
-          message: `File size exceeds ${formatFileSize(MAX_FILE_SIZE)}`,
+          type: UPLOAD_ERROR_TYPES.VALIDATION,
+          message: 'Exceeds the 200MB size limit',
+          details: { fileSize: file.size, maxSize: MAX_FILE_SIZE },
           timestamp: Date.now()
         };
-        uploadErrorTracker.addError(sanitizedFileName, error);
+        uploadErrorTracker.addError(fileName, error);
         throw new Error(error.message);
       }
 
-      // Calculate timeout multiplier based on file size
-      const timeoutMultiplier = Math.ceil(file.size / (1024 * 1024)); // 1 second per MB
+      // If file size is large, increase timeout for this attempt
+      const timeoutMultiplier = Math.min(retryCount + 1, 3);
       const currentTimeout = UPLOAD_TIMEOUT * timeoutMultiplier;
 
-      const uploadPromise = uploadToS3(file, sanitizedFileName).catch(error => {
+      const uploadPromise = uploadToS3(file, fileName).catch(error => {
         // Classify S3 errors
         const s3Error: UploadError = {
           type: UPLOAD_ERROR_TYPES.S3_ERROR,
-          message: error.message,
-          details: error,
+          message: error.message || 'S3 upload failed',
+          details: {
+            code: error.code,
+            statusCode: error.$metadata?.httpStatusCode,
+            requestId: error.$metadata?.requestId
+          },
           timestamp: Date.now()
         };
-        uploadErrorTracker.addError(sanitizedFileName, s3Error);
+        uploadErrorTracker.addError(fileName, s3Error);
         throw error;
       });
 
-      // Set up timeout
-      const timeoutPromise = new Promise((_, reject) => {
+      const timeoutPromise = new Promise<string>((_, reject) => {
         setTimeout(() => {
           const timeoutError: UploadError = {
             type: UPLOAD_ERROR_TYPES.TIMEOUT,
-            message: `Upload timed out after ${Math.round(currentTimeout/1000)}s`,
+            message: 'Upload timeout',
+            details: { timeout: currentTimeout },
             timestamp: Date.now()
           };
-          uploadErrorTracker.addError(sanitizedFileName, timeoutError);
+          uploadErrorTracker.addError(fileName, timeoutError);
           reject(new Error('Upload timeout'));
         }, currentTimeout);
       });
 
-      try {
-        return await Promise.race([uploadPromise, timeoutPromise]) as string;
-      } catch (error: any) {
-        const currentError = error || lastError || new Error('Unknown error');
-        
-        // Handle network errors
-        if (error.name === 'NetworkError' || error.message.includes('network')) {
-          const networkError: UploadError = {
-            type: UPLOAD_ERROR_TYPES.NETWORK,
-            message: 'Network error occurred during upload',
-            details: error,
-            timestamp: Date.now()
-          };
-          uploadErrorTracker.addError(sanitizedFileName, networkError);
-        }
-
-        // Log detailed error information
-        console.error(`Upload attempt ${retryCount + 1} failed for ${sanitizedFileName}:`, {
-          error: currentError.message,
-          retryCount,
-          fileName: sanitizedFileName,
-          fileSize: formatFileSize(file.size),
-          errorHistory: uploadErrorTracker.getErrors(sanitizedFileName)
-        });
-
-        if (retryCount < MAX_RETRIES) {
-          const delay = getRetryDelay(retryCount);
-          console.log(`Retrying upload for ${sanitizedFileName} after ${Math.round(delay/1000)}s (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          
-          await sleep(delay);
-          return uploadToS3WithRetry(file, sanitizedFileName, retryCount + 1, currentError);
-        }
-
-        // If we've exhausted all retries, throw an error with complete history
-        const finalError = new Error(`Upload failed after ${MAX_RETRIES} retries. Error history: ${
-          uploadErrorTracker.getErrors(sanitizedFileName)
-            .map(err => `${err.type}: ${err.message}`)
-            .join(', ')
-        }`);
-        throw finalError;
+      return await Promise.race([uploadPromise, timeoutPromise]);
+    } catch (error) {
+      const currentError = error instanceof Error ? error : new Error('Unknown error');
+      
+      // Check if it's a network error
+      if (currentError.message.includes('network') || currentError.message.includes('connection')) {
+        const networkError: UploadError = {
+          type: UPLOAD_ERROR_TYPES.NETWORK,
+          message: currentError.message,
+          details: { navigator: navigator.onLine },
+          timestamp: Date.now()
+        };
+        uploadErrorTracker.addError(fileName, networkError);
       }
-    } catch (error: any) {
-      throw error;
+
+      // Log detailed error information
+      console.error(`Upload attempt ${retryCount + 1} failed for ${fileName}:`, {
+        error: currentError.message,
+        retryCount,
+        fileName,
+        fileSize: formatFileSize(file.size),
+        errorHistory: uploadErrorTracker.getErrors(fileName)
+      });
+
+      if (retryCount < MAX_RETRIES) {
+        const delay = getRetryDelay(retryCount);
+        console.log(`Retrying upload for ${fileName} after ${Math.round(delay/1000)}s (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+        
+        await sleep(delay);
+        return uploadToS3WithRetry(file, fileName, retryCount + 1, currentError);
+      }
+
+      // If we've exhausted all retries, throw an error with complete history
+      const finalError = new Error(`Upload failed after ${MAX_RETRIES} retries. Error history: ${
+        uploadErrorTracker.getErrors(fileName)
+          .map(err => `${err.type}: ${err.message}`)
+          .join(', ')
+      }`);
+      throw finalError;
     }
   };
 
@@ -638,10 +605,7 @@ const UploadImage = () => {
           
           // Compress image before upload
           const compressedBlob = await compressImage(file);
-          const compressedFile = new File([compressedBlob], fileName, { 
-            type: compressedBlob.type || file.type || 'image/jpeg',
-            lastModified: Date.now()
-          });
+          const compressedFile = new File([compressedBlob], fileName, { type: file.type });
           
           // Upload with timeout
           const timeoutPromise = new Promise<never>((_, reject) => {
@@ -819,9 +783,6 @@ const UploadImage = () => {
         throw new Error('Event not found');
       }
 
-      // Create a collection for the event if it doesn't exist
-      await createCollection(selectedEvent);
-
       // Get existing image names from S3
       const existingImages = new Set();
       if (currentEvent.photoCount > 0) {
@@ -880,43 +841,6 @@ const UploadImage = () => {
       
       // Process only unique files using the optimized upload queue
       const results = await uploadToS3WithRetryQueue(compressedFiles);
-      
-      // Index faces for all uploaded images using batch processing
-      const imageKeys = results.map(url => {
-        const filename = url.split('/').pop();
-        return `events/shared/${selectedEvent}/images/${filename}`;
-      }).filter(key => key);
-      
-      if (imageKeys.length > 0) {
-        try {
-          setUploadProgress(prev => ({ 
-            current: prev?.current || 0, 
-            total: prev?.total || 0, 
-            status: 'Indexing faces for search...',
-            currentFile: prev?.currentFile 
-          }));
-          
-          const indexingResult = await indexFacesBatch(selectedEvent, imageKeys, (completed: number, total: number, currentImage?: string) => {
-            const progress = Math.round((completed / total) * 100);
-            setUploadProgress(prev => ({ 
-              current: prev?.current || 0,
-              total: prev?.total || 0,
-              status: `Indexing faces: ${completed}/${total} (${progress}%)`,
-              currentFile: currentImage?.split('/').pop() || ''
-            }));
-          });
-          
-          console.log(`Face indexing completed: ${indexingResult.successful.length} successful, ${indexingResult.failed.length} failed`);
-          
-          if (indexingResult.failed.length > 0) {
-            console.warn('Some images failed to index:', indexingResult.failed);
-            // Continue with upload completion even if some indexing failed
-          }
-        } catch (error) {
-          console.error('Error during face indexing:', error);
-          // Continue with upload completion even if indexing failed
-        }
-      }
       
       // Update event data only if we have successful uploads
       if (results.length > 0) {
@@ -1477,17 +1401,9 @@ export default UploadImage;
 
 // Add image compression function
 const compressImage = async (file: File): Promise<Blob> => {
-  if (!file || !file.type.startsWith('image/')) {
-    throw new Error('Invalid file type for compression');
-  }
-
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      if (!e.target?.result) {
-        reject(new Error('Failed to read file for compression'));
-        return;
-      }
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
@@ -1518,16 +1434,10 @@ const compressImage = async (file: File): Promise<Blob> => {
 
         canvas.toBlob(
           (blob) => {
-            if (blob && blob.size > 0) {
-              console.log('[DEBUG] UploadImage.tsx: Image compressed successfully:', {
-                originalSize: file.size,
-                compressedSize: blob.size,
-                compression: ((file.size - blob.size) / file.size * 100).toFixed(1) + '%'
-              });
+            if (blob) {
               resolve(blob);
             } else {
-              console.error('[ERROR] UploadImage.tsx: Failed to compress image - blob is null or empty');
-              reject(new Error('Failed to compress image - blob is null or empty'));
+              reject(new Error('Failed to compress image'));
             }
           },
           'image/jpeg',
@@ -1544,54 +1454,34 @@ const compressImage = async (file: File): Promise<Blob> => {
 
 // Add uploadToS3 function before the UploadImage component
 const uploadToS3 = async (file: File, fileName: string): Promise<string> => {
-  try {
-    const { bucketName } = await validateEnvVariables();
-    const s3Client = await s3ClientPromise;
-    const eventId = localStorage.getItem('currentEventId');
-    
-    if (!eventId) {
-      throw new Error('No event ID found');
-    }
-
-    // Sanitize the filename
-    const sanitizedFileName = sanitizeFilename(fileName);
-    const key = `events/shared/${eventId}/images/${sanitizedFileName}`;
-
-    console.log('[DEBUG] UploadImage.tsx: Uploading file with:', {
-      originalName: fileName,
-      sanitizedName: sanitizedFileName,
-      key: key,
-      fileType: file.type,
-      fileSize: file.size
-    });
-
-    // Convert File to ArrayBuffer to ensure proper format for S3 upload
-    const arrayBuffer = await file.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-
-    const upload = new Upload({
-      client: s3Client,
-      params: {
-        Bucket: bucketName,
-        Key: key,
-        Body: uint8Array,
-        ContentType: file.type || 'image/jpeg',
-        ACL: 'public-read'
-      },
-      partSize: 1024 * 1024 * 5
-    });
-
-    await upload.done();
-    console.log('[DEBUG] UploadImage.tsx: Successfully uploaded:', key);
-    return `https://${bucketName}.s3.amazonaws.com/${key}`;
-  } catch (error: any) {
-    console.error('[ERROR] UploadImage.tsx: Failed to upload to S3:', {
-      error: error.message,
-      fileName,
-      eventId: localStorage.getItem('currentEventId'),
-      fileType: file.type,
-      fileSize: file.size
-    });
-    throw error;
+  const { bucketName } = await validateEnvVariables();
+  const eventId = localStorage.getItem('currentEventId');
+  if (!eventId) {
+    throw new Error('No event ID found');
   }
+  const key = `events/shared/${eventId}/images/${fileName}`;
+
+  const upload = new Upload({
+    client: await s3ClientPromise,
+    params: {
+      Bucket: bucketName,
+      Key: key,
+      Body: file,
+      ContentType: file.type
+    },
+    queueSize: 4,
+    partSize: 1024 * 1024 * 5, // 5MB per part
+    leavePartsOnError: false
+  });
+
+  // Handle upload progress
+  upload.on('httpUploadProgress', (progress) => {
+    const loaded = progress.loaded || 0;
+    const total = progress.total || file.size;
+    const percentLoaded = Math.round((loaded * 100) / total);
+    console.log(`Upload progress for ${fileName}: ${percentLoaded}%`);
+  });
+
+  await upload.done();
+  return `https://${bucketName}.s3.amazonaws.com/${key}`;
 };
