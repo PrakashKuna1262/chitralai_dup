@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Image as ImageIcon, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle } from 'lucide-react';
 import { getAttendeeImagesByUserAndEvent } from '../config/attendeeStorage';
+import { validateEnvVariables } from '../config/aws';
 import ProgressiveImage from './ProgressiveImage';
+
 interface ShareMenuState {
   isOpen: boolean;
   imageUrl: string;
@@ -174,6 +176,9 @@ const EventPhotos: React.FC = () => {
           return;
         }
 
+        // Get the S3 bucket name
+        const { bucketName } = await validateEnvVariables();
+
         // Get attendee images directly from the Attendee-imgs table for this specific event
         const attendeeData = await getAttendeeImagesByUserAndEvent(userEmail, eventId || '');
         
@@ -192,12 +197,12 @@ const EventPhotos: React.FC = () => {
           coverImage: attendeeData.coverImage
         });
         
-        // Convert the matched images array to MatchingImage objects
-        const eventImages = attendeeData.matchedImages.map(url => ({
-          imageId: url.split('/').pop() || '',
+        // Convert the matched images array to MatchingImage objects and construct full S3 URLs
+        const eventImages = attendeeData.matchedImages.map(imagePath => ({
+          imageId: imagePath.split('/').pop() || '',
           eventId: attendeeData.eventId,
           eventName: attendeeData.eventName || `Event ${attendeeData.eventId}`,
-          imageUrl: url,
+          imageUrl: `https://${bucketName}.s3.amazonaws.com/${imagePath}`,
           matchedDate: attendeeData.uploadedAt
         }));
 
