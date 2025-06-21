@@ -942,6 +942,7 @@ const Navbar: React.FC<NavbarProps> = ({
                           shape="rectangular"
                           logo_alignment="left"
                           auto_select={false}
+                          useOneTap={false}
                         />
                       </div>
                       <p className="text-sm text-gray-600 mt-4">
