@@ -43,25 +43,22 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
   }, []);
 
   return (
-    <span 
+    <div 
       ref={imageRef}
-      style={{ position: 'relative', display: 'inline-block', ...style }}
+      className="relative w-full h-full"
+      style={style}
     >
       {isVisible && (
         <>
           <img
             src={compressedSrc}
             alt={alt}
-            className={className}
+            className={`absolute inset-0 w-full h-full ${className}`}
             style={{
               filter: highResLoaded ? 'blur(0px)' : 'blur(8px)',
-              transition: 'filter 0.3s',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
+              transition: 'filter 0.3s ease-in-out',
               objectFit: 'cover',
+              objectPosition: 'center',
             }}
             loading="lazy"
             draggable={false}
@@ -69,14 +66,12 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
           <img
             src={originalSrc}
             alt={alt}
-            className={className}
+            className={`absolute inset-0 w-full h-full ${className}`}
             style={{
               opacity: highResLoaded ? 1 : 0,
-              transition: 'opacity 0.3s',
-              width: '100%',
-              height: '100%',
+              transition: 'opacity 0.3s ease-in-out',
               objectFit: 'cover',
-              position: 'relative',
+              objectPosition: 'center',
               zIndex: 1,
             }}
             loading="lazy"
@@ -85,7 +80,7 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = ({
           />
         </>
       )}
-    </span>
+    </div>
   );
 };
 

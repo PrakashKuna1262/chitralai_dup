@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Image as ImageIcon, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle } from 'lucide-react';
 import { getAttendeeImagesByUserAndEvent } from '../config/attendeeStorage';
+import { validateEnvVariables } from '../config/aws';
 import ProgressiveImage from './ProgressiveImage';
+import { ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { s3ClientPromise } from '../config/aws';
+
 interface ShareMenuState {
   isOpen: boolean;
   imageUrl: string;
@@ -34,11 +38,65 @@ const EventPhotos: React.FC = () => {
   const [images, setImages] = useState<MatchingImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState<MatchingImage | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [shareMenu, setShareMenu] = useState<ShareMenuState>({
     isOpen: false,
     imageUrl: '',
     position: { top: 0, left: 0 }
   });
+  const IMAGES_PER_PAGE = 300;
+  const [bucketName, setBucketName] = useState<string | undefined>();
+
+  // Helper function to construct S3 URL
+  const constructS3Url = (imageUrl: string): string => {
+    // If it's already a full URL, return as is
+    if (imageUrl.startsWith('http')) {
+      return imageUrl;
+    }
+    // Otherwise construct the URL using the bucket name
+    return `https://${bucketName}.s3.amazonaws.com/${imageUrl}`;
+  };
+
+  // Modify fetchEventImages to include preloading
+  const fetchEventImages = async (pageNum = 1) => {
+    try {
+      setLoading(true);
+      const { bucketName } = await validateEnvVariables();
+      setBucketName(bucketName);
+      
+      const listCommand = new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: `events/shared/${eventId}/images/`,
+        MaxKeys: IMAGES_PER_PAGE,
+        StartAfter: pageNum > 1 ? `events/shared/${eventId}/images/${(pageNum - 1) * IMAGES_PER_PAGE}` : undefined
+      });
+  
+      const result = await (await s3ClientPromise).send(listCommand);
+      if (!result.Contents) {
+        setHasMore(false);
+        return;
+      }
+  
+      const imageItems = result.Contents
+        .filter(item => item.Key && item.Key.match(/\.(jpg|jpeg|png)$/i))
+        .map(item => ({
+          imageId: item.Key?.split('/').pop() || '',
+          eventId: eventId || '',
+          eventName: event?.eventName || `Event ${eventId}`,
+          imageUrl: constructS3Url(item.Key || ''),
+          matchedDate: item.LastModified?.toISOString() || new Date().toISOString()
+        }));
+  
+      setImages(prev => pageNum === 1 ? imageItems : [...prev, ...imageItems]);
+      
+      setHasMore(imageItems.length === IMAGES_PER_PAGE);
+    } catch (error) {
+      console.error('Error fetching event images:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleShare = async (platform: string, imageUrl: string, e?: React.MouseEvent) => {
     if (e) {
@@ -165,7 +223,7 @@ const EventPhotos: React.FC = () => {
   };
 
   useEffect(() => {
-    const fetchEventPhotos = async () => {
+    const fetchEventData = async () => {
       try {
         setLoading(true);
         const userEmail = localStorage.getItem('userEmail');
@@ -173,6 +231,10 @@ const EventPhotos: React.FC = () => {
           navigate('/GoogleLogin');
           return;
         }
+
+        // Get the S3 bucket name
+        const { bucketName } = await validateEnvVariables();
+        setBucketName(bucketName);
 
         // Get attendee images directly from the Attendee-imgs table for this specific event
         const attendeeData = await getAttendeeImagesByUserAndEvent(userEmail, eventId || '');
@@ -189,15 +251,15 @@ const EventPhotos: React.FC = () => {
           eventId: attendeeData.eventId,
           eventName: attendeeData.eventName || `Event ${attendeeData.eventId}`,
           eventDate: attendeeData.uploadedAt,
-          coverImage: attendeeData.coverImage
+          coverImage: attendeeData.coverImage ? constructS3Url(attendeeData.coverImage) : undefined
         });
         
-        // Convert the matched images array to MatchingImage objects
-        const eventImages = attendeeData.matchedImages.map(url => ({
-          imageId: url.split('/').pop() || '',
+        // Convert the matched images array to MatchingImage objects and construct full S3 URLs
+        const eventImages = attendeeData.matchedImages.map(imagePath => ({
+          imageId: imagePath.split('/').pop() || '',
           eventId: attendeeData.eventId,
           eventName: attendeeData.eventName || `Event ${attendeeData.eventId}`,
-          imageUrl: url,
+          imageUrl: constructS3Url(imagePath),
           matchedDate: attendeeData.uploadedAt
         }));
 
@@ -209,7 +271,7 @@ const EventPhotos: React.FC = () => {
       }
     };
 
-    fetchEventPhotos();
+    fetchEventData();
   }, [eventId, navigate]);
 
   const handleDownload = async (url: string) => {

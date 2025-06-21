@@ -995,9 +995,9 @@ const EventDashboard = (props: EventDashboardProps) => {
                             </div>
                             <button
                                 onClick={() => setShowQRCode(true)}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                className="flex items-center bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors shadow-sm hover:shadow-md"
                             >
-                                <QrCode className="w-4 h-4" />
+                                <QrCode size={16} className="mr-1.5" />
                                 Show QR
                             </button>
                         </div>
