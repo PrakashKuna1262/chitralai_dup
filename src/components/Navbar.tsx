@@ -935,12 +935,12 @@ const Navbar: React.FC<NavbarProps> = ({
                           onError={() => {
                             console.error('Google Login Error');
                             setSignInError('Failed to sign in. Please try again.');
-                          }} 
+                          }}
                           text="continue_with"
                           type="standard"
                           theme="outline"
                           shape="rectangular"
-                          logo_alignment="left"
+                          logo_alignment="left" 
                         />
                       </div>
                       <p className="text-sm text-gray-600 mt-4">
