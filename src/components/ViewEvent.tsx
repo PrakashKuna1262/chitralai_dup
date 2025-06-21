@@ -32,6 +32,13 @@ interface FaceGroups {
   [groupId: string]: FaceRecordWithImage[];
 }
 
+interface ShareData {
+  title?: string;
+  text?: string;
+  url?: string;
+  files?: File[];
+}
+
 /**
  * A small helper component that displays one face as a 96×96 circular thumbnail,
  * zooming and centering on the face bounding box.
@@ -429,62 +436,120 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     setSharing(true);
     
     try {
-      // Get shareable links for the selected images
-      const shareableLinks = await getShareableLinks(selectedForShare);
+      // Get the selected images to share as actual files
+      const selectedImages = images.filter(img => selectedForShare.has(img.key));
       
-      if (shareableLinks.length === 0) {
-        throw new Error('No shareable links could be generated');
+      // Convert images to File objects for sharing
+      const imageFiles: File[] = [];
+      const shareableLinks: string[] = [];
+      
+      for (const image of selectedImages) {
+        try {
+          // Fetch the image as a blob
+          const response = await fetch(image.url, {
+            mode: 'cors',
+            headers: { 'Cache-Control': 'no-cache' }
+          });
+          
+          if (!response.ok) {
+            console.error('Failed to fetch image:', image.url);
+            continue;
+          }
+          
+          const blob = await response.blob();
+          
+          // Extract filename from the image key
+          const filename = image.key.split('/').pop() || `photo-${Date.now()}.jpg`;
+          const cleanFilename = filename.replace(/^\d+-/, ''); // Remove timestamp prefix if present
+          
+          // Create a File object from the blob
+          const file = new File([blob], cleanFilename, { type: blob.type });
+          imageFiles.push(file);
+          
+          // Also keep the URL as fallback
+          shareableLinks.push(image.url);
+        } catch (error) {
+          console.error('Error processing image:', image.url, error);
+          // Add the direct URL as fallback
+          shareableLinks.push(image.url);
+        }
       }
       
-      // Create a simple HTML content with image previews and links
-      const shareText = `Check out these photos from ${eventName}:\n\n`;
-      const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #1a365d;">Photos from ${eventName}</h2>
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 20px;">
-            ${shareableLinks.map(link => `
-              <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
-                <img src="${link}" style="width: 100%; height: 150px; object-fit: cover;" alt="Event photo">
-                <div style="padding: 8px; text-align: center;">
-                  <a href="${link}" style="color: #3182ce; text-decoration: none; font-size: 14px;" target="_blank" rel="noopener noreferrer">
-                    View Full Size
-                  </a>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-          <p style="margin-top: 20px; color: #4a5568; font-size: 14px;">
-            Shared via Chitra Photo Sharing App
-          </p>
-        </div>
-      `;
-      
-      // Try Web Share API first (for mobile devices)
-      if (navigator.share) {
+      // Try Web Share API first with actual files (for mobile devices)
+      if (navigator.share && navigator.canShare) {
         try {
-          await navigator.share({
+          const shareData: ShareData = {
             title: `Photos from ${eventName}`,
-            text: shareText,
-            url: shareableLinks[0],
-            html: htmlContent
-          });
+            text: `Check out these ${imageFiles.length} photos from ${eventName}!`,
+          };
+          
+          // Only add files if we have them and the browser supports file sharing
+          if (imageFiles.length > 0 && navigator.canShare({ files: imageFiles })) {
+            shareData.files = imageFiles;
+          }
+          
+          await navigator.share(shareData);
           setSelectedForShare(new Set());
           setShareMode(false);
           return;
-        } catch (err) {
-          if (err.name !== 'AbortError') {
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name !== 'AbortError') {
             console.error('Error sharing with Web Share API:', err);
             // Continue to fallback methods if Web Share API fails
           } else {
             // User cancelled the share
+            setSharing(false);
             return;
           }
         }
       }
       
-      // Fallback 1: Copy links to clipboard
+      // Fallback 1: Create a downloadable zip file with all images
+      if (imageFiles.length > 0) {
+        try {
+          // For multiple images, create a zip file
+          if (imageFiles.length > 1) {
+            // We'll need to import JSZip for this, but for now let's use individual downloads
+            alert(`Preparing ${imageFiles.length} images for download. They will download individually.`);
+            
+            // Download each image individually
+            imageFiles.forEach((file, index) => {
+              setTimeout(() => {
+                const url = URL.createObjectURL(file);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = file.name;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+              }, index * 500); // Stagger downloads to avoid browser blocking
+            });
+          } else {
+            // Single image - direct download
+            const file = imageFiles[0];
+            const url = URL.createObjectURL(file);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = file.name;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+          }
+          
+          setSelectedForShare(new Set());
+          setShareMode(false);
+          return;
+        } catch (downloadErr) {
+          console.error('Failed to download images:', downloadErr);
+        }
+      }
+      
+      // Fallback 2: Copy image URLs to clipboard
       try {
-        await navigator.clipboard.writeText(shareText + shareableLinks.join('\n'));
+        const shareText = `Check out these photos from ${eventName}:\n\n${shareableLinks.join('\n\n')}`;
+        await navigator.clipboard.writeText(shareText);
         alert('Image links have been copied to your clipboard!');
         setSelectedForShare(new Set());
         setShareMode(false);
@@ -493,14 +558,14 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
         console.error('Failed to copy to clipboard:', clipboardErr);
       }
       
-      // Fallback 2: Open mail client
+      // Fallback 3: Open mail client with image URLs
       const subject = encodeURIComponent(`Photos from ${eventName}`);
-      const body = encodeURIComponent(shareText + shareableLinks.join('\n\n'));
+      const body = encodeURIComponent(`Check out these photos from ${eventName}:\n\n${shareableLinks.join('\n\n')}`);
       window.open(`mailto:?subject=${subject}&body=${body}`);
       
     } catch (err) {
       console.error('Error sharing images:', err);
-      alert('Failed to share images. You can manually copy the image URLs from the download links.');
+      alert('Failed to share images. Please try again or download them individually.');
     } finally {
       setSharing(false);
     }
