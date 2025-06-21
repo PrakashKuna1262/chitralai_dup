@@ -940,7 +940,8 @@ const Navbar: React.FC<NavbarProps> = ({
                           type="standard"
                           theme="outline"
                           shape="rectangular"
-                          logo_alignment="left" 
+                          logo_alignment="left"
+                          auto_select={false}
                         />
                       </div>
                       <p className="text-sm text-gray-600 mt-4">
