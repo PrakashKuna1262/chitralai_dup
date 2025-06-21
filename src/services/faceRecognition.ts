@@ -292,7 +292,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
           }
         },
         MaxFaces: 50,
-        FaceMatchThreshold: 60 // Minimum similarity threshold
+        FaceMatchThreshold: 80 // Minimum similarity threshold
       });
 
       const response = await rekognitionClient.send(command);
