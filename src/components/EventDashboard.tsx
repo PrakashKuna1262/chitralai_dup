@@ -1288,7 +1288,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                                     }}
                                                     className="p-1 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50"
                                                 >
-                                                    <Edit className="w-3 h-3" />
+                                                    <Edit className="w-4 h-4" />
                                                 </button>
                                             </div>
                                         )}
@@ -1350,7 +1350,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                                         }}
                                                         className="p-0.5 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50"
                                                     >
-                                                        <Edit className="w-3 h-3" />
+                                                        <Edit className="w-4 h-4" />
                                                     </button>
                                                 </div>
                                             )}

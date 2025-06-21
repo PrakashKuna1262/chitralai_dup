@@ -205,7 +205,7 @@ const PhoneVerification: React.FC<PhoneVerificationProps> = ({
             text="continue_with"
             shape="rectangular"
             logo_alignment="left"
-            auto_select={false}
+            
           />
         </div>
       </div>
