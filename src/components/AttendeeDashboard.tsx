@@ -51,6 +51,18 @@ const deduplicateImages = (images: MatchingImage[]): MatchingImage[] => {
   });
 };
 
+// Helper function to construct S3 URL
+const constructS3Url = (imageUrl: string, bucket?: string): string => {
+  // If it's already a full URL, return as is
+  if (imageUrl.startsWith('http')) {
+    return imageUrl;
+  }
+  // Use provided bucket name or default to chitral-ai
+  const useBucket = bucket || 'chitral-ai';
+  // Otherwise construct the URL using the bucket name
+  return `https://${useBucket}.s3.amazonaws.com/${imageUrl}`;
+};
+
 const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModal }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -252,8 +264,11 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
   }, [location.search]); // We don't need handleEventCodeSubmit in dependencies
 
   // Add the handleExistingEventData helper function
-  const handleExistingEventData = (existingData: any, event: any) => {
+  const handleExistingEventData = async (existingData: any, event: any) => {
     setProcessingStatus('Found your previous photos for this event!');
+    
+    // Get the S3 bucket name
+    const { bucketName } = await validateEnvVariables();
     
     // Add this event to the list if not already there
     const eventExists = attendedEvents.some(e => e.eventId === event.id);
@@ -274,7 +289,7 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
       imageId: url.split('/').pop() || '',
       eventId: event.id,
       eventName: existingData.eventName || event.name,
-      imageUrl: url,
+      imageUrl: constructS3Url(url, bucketName),
       matchedDate: existingData.uploadedAt,
       similarity: 0
     }));
@@ -327,6 +342,9 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         const userEmail = localStorage.getItem('userEmail');
         setLoading(true);
 
+        // Get the S3 bucket name
+        const { bucketName } = await validateEnvVariables();
+
         // Dynamically import required modules
         const { getAllAttendeeImagesByUser, getAttendeeStatistics } = await import('../config/attendeeStorage');
         const { getEventById } = await import('../config/eventStorage');
@@ -375,7 +393,7 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
                   imageId: imageUrl.split('/').pop() || '',
                   eventId: data.eventId,
                   eventName: eventName,
-                  imageUrl: imageUrl,
+                  imageUrl: constructS3Url(imageUrl, bucketName),
                   matchedDate: data.uploadedAt,
                   similarity: 0
                 });
@@ -508,48 +526,10 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
       
       if (existingData) {
         console.log('User already has images for this event:', existingData);
-        setProcessingStatus('Found your previous photos for this event!');
-        
-        // Add this event to the list if not already there
-        const eventExists = attendedEvents.some(e => e.eventId === event.id);
-        if (!eventExists) {
-          const newEvent: Event = {
-            eventId: event.id,
-            eventName: existingData.eventName || event.name,
-            eventDate: event.date,
-            // Use coverImage from attendee data if available, then event's coverImage, then fall back to first matched image
-            thumbnailUrl: existingData.coverImage || event.coverImage || existingData.matchedImages[0] || '',
-            coverImage: existingData.coverImage || event.coverImage || ''
-          };
-          setAttendedEvents(prev => [newEvent, ...prev]);
-        }
-        
-        // Add the matched images to the list if not already there
-        const newImages: MatchingImage[] = existingData.matchedImages.map((url: string) => ({
-          imageId: url.split('/').pop() || '',
-          eventId: event.id,
-          eventName: existingData.eventName || event.name,
-          imageUrl: url,
-          matchedDate: existingData.uploadedAt,
-          similarity: 0
-        }));
-        
-        // Check if these images are already in the state
-        const existingImageUrls = new Set(matchingImages.map(img => img.imageUrl));
-        const uniqueNewImages = newImages.filter(img => !existingImageUrls.has(img.imageUrl));
-        
-        if (uniqueNewImages.length > 0) {
-          setMatchingImages(prev => deduplicateImages([...uniqueNewImages, ...prev]));
-        }
-        
-        // Set filter to show only this event's images
-        setSelectedEventFilter(event.id);
+        await handleExistingEventData(existingData, event);
         
         // Clear event code
         setEventCode('');
-        
-        // Set success message
-        setSuccessMessage(`Found ${existingData.matchedImages.length} photos from ${event.name}!`);
         
         // Update statistics
         await updateStatistics();
