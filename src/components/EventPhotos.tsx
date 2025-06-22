@@ -49,13 +49,15 @@ const EventPhotos: React.FC = () => {
   const [bucketName, setBucketName] = useState<string | undefined>();
 
   // Helper function to construct S3 URL
-  const constructS3Url = (imageUrl: string): string => {
+  const constructS3Url = (imageUrl: string, bucket?: string): string => {
     // If it's already a full URL, return as is
     if (imageUrl.startsWith('http')) {
       return imageUrl;
     }
+    // Use provided bucket name or fallback to state variable or default
+    const useBucket = bucket || bucketName || 'chitral-ai';
     // Otherwise construct the URL using the bucket name
-    return `https://${bucketName}.s3.amazonaws.com/${imageUrl}`;
+    return `https://${useBucket}.s3.amazonaws.com/${imageUrl}`;
   };
 
   // Modify fetchEventImages to include preloading
@@ -84,7 +86,7 @@ const EventPhotos: React.FC = () => {
           imageId: item.Key?.split('/').pop() || '',
           eventId: eventId || '',
           eventName: event?.eventName || `Event ${eventId}`,
-          imageUrl: constructS3Url(item.Key || ''),
+          imageUrl: constructS3Url(item.Key || '', bucketName),
           matchedDate: item.LastModified?.toISOString() || new Date().toISOString()
         }));
   
@@ -251,7 +253,7 @@ const EventPhotos: React.FC = () => {
           eventId: attendeeData.eventId,
           eventName: attendeeData.eventName || `Event ${attendeeData.eventId}`,
           eventDate: attendeeData.uploadedAt,
-          coverImage: attendeeData.coverImage ? constructS3Url(attendeeData.coverImage) : undefined
+          coverImage: attendeeData.coverImage ? constructS3Url(attendeeData.coverImage, bucketName) : undefined
         });
         
         // Convert the matched images array to MatchingImage objects and construct full S3 URLs
@@ -259,7 +261,7 @@ const EventPhotos: React.FC = () => {
           imageId: imagePath.split('/').pop() || '',
           eventId: attendeeData.eventId,
           eventName: attendeeData.eventName || `Event ${attendeeData.eventId}`,
-          imageUrl: constructS3Url(imagePath),
+          imageUrl: constructS3Url(imagePath, bucketName),
           matchedDate: attendeeData.uploadedAt
         }));
 
