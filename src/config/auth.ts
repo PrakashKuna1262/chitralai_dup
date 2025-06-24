@@ -6,8 +6,8 @@ interface DecodedToken {
   [key: string]: any;
 }
 
-// Token refresh interval (100 minutes)
-const TOKEN_REFRESH_INTERVAL = 100 * 60 * 1000;
+// Token refresh interval (10000 minutes)
+const TOKEN_REFRESH_INTERVAL = 10000 * 60 * 1000;
 
 // Function to check if token needs refresh
 export const shouldRefreshToken = (token: string): boolean => {
