@@ -76,4 +76,4 @@ export const setupTokenRefresh = (currentToken: string, refreshTokenValue: strin
 // Function to clear token refresh interval
 export const clearTokenRefresh = (interval: NodeJS.Timeout) => {
   clearInterval(interval);
-};
+}; 
