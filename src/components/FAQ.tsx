@@ -37,70 +37,139 @@ const faqs = [
 
 const FAQ = () => {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
 
   const toggleFaq = (index: number) => {
     setOpenIndex(openIndex === index ? null : index);
+  };
+
+  const handleMouseEnter = () => setIsPaused(true);
+  const handleMouseLeave = () => setIsPaused(false);
+  const handleTouchStart = () => setIsPaused(true);
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    // Only resume if touch ends outside the partner container
+    const target = e.target as HTMLElement;
+    const partnerContainer = target.closest('.partner-container');
+    if (partnerContainer) {
+      const touch = e.changedTouches[0];
+      const elementAtTouch = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (!partnerContainer.contains(elementAtTouch)) {
+        setIsPaused(false);
+      }
+    } else {
+      setIsPaused(false);
+    }
   };
 
   return (
     <div id="faq" className="bg-gradient-to-b from-white to-blue-50/50 py-12 sm:py-16 md:py-20 lg:py-24 px-4 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
         {/* Partners Section */}
-        <div className="mb-24 mx-auto max-w-7xl">
+        <div className="mb-16 mx-auto max-w-7xl">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="text-center mb-8"
+            transition={{ duration: 1.0 }}
+            className="text-center mb-6"
           >
-            <h3 className="text-xl sm:text-2xl font-semibold text-gray-900">
+            <h3 className="text-xl sm:text-2xl font-semibold text-gray-900 mb-4">
               Our Partners
             </h3>
-          </motion.div>
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="w-full"
-          >
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-6 sm:gap-8 px-4">
-              {[
-                {
-                  src: "https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png",
-                  alt: "Draper"
-                },
-                {
-                  src: "https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png",
-                  alt: "T-Hub"
-                },
-                {
-                  src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU",
-                  alt: "AWS for Startup"
-                },
-                {
-                  src: "https://tokyosuteam.metro.tokyo.lg.jp/en/cms/wp-content/uploads/1996/10/024-179.jpg",
-                  alt: "Start2"
-                },
-                {
-                  src: "https://upload.wikimedia.org/wikipedia/commons/0/02/German_Accelerator_Logo.png",
-                  alt: "German Accelerator"
-                },
-                {
-                  src: "https://hyderabad.tie.org/wp-content/uploads/2025/02/TiE-Logo-Black.png",
-                  alt: "German Accelerator"
-                }
-              ].map((partner, index) => (
-                <div 
-                  key={index}
-                  className="flex items-center justify-center h-32 p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-300"
-                >
-                  <img
-                    src={partner.src}
-                    alt={partner.alt}
-                    className="max-h-full max-w-full object-contain p-2"
-                  />
-                </div>
-              ))}
+            <div className="w-full overflow-hidden py-4">
+              <motion.div 
+                className="flex items-center partner-container"
+                animate={{
+                  x: ['0%', '-100%'],
+                }}
+                transition={{
+                  duration: 60,
+                  repeat: Infinity,
+                  ease: 'linear',
+                }}
+                style={{
+                  animationPlayState: isPaused ? 'paused' : 'running'
+                }}
+              >
+                {[
+                  // First set of logos
+                  ...[
+                    {
+                      src: "https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png",
+                      alt: "Draper"
+                    },
+                    {
+                      src: "https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png",
+                      alt: "T-Hub"
+                    },
+                    {
+                      src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU",
+                      alt: "AWS for Startup"
+                    },
+                    {
+                      src: "https://tokyosuteam.metro.tokyo.lg.jp/en/cms/wp-content/uploads/1996/10/024-179.jpg",
+                      alt: "Start2"
+                    },
+                    {
+                      src: "https://upload.wikimedia.org/wikipedia/commons/0/02/German_Accelerator_Logo.png",
+                      alt: "German Accelerator"
+                    },
+                    {
+                      src: "https://hyderabad.tie.org/wp-content/uploads/2025/02/TiE-Logo-Black.png",
+                      alt: "TiE"
+                    },
+                    {
+                      src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTjailEBhsb5i8VHPzdulQcAkPvi4QgkW_8W_YdO_GZtT0DqhyY0W04T3FNERQ_NHW9_n0&usqp=CAU",
+                      alt: "alpha"
+                    }
+                  ],
+                  // Duplicate set for seamless looping
+                  ...[
+                    {
+                      src: "https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png",
+                      alt: "Draper"
+                    },
+                    {
+                      src: "https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png",
+                      alt: "T-Hub"
+                    },
+                    {
+                      src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU",
+                      alt: "AWS for Startup"
+                    },
+                    {
+                      src: "https://tokyosuteam.metro.tokyo.lg.jp/en/cms/wp-content/uploads/1996/10/024-179.jpg",
+                      alt: "Start2"
+                    },
+                    {
+                      src: "https://upload.wikimedia.org/wikipedia/commons/0/02/German_Accelerator_Logo.png",
+                      alt: "German Accelerator"
+                    },
+                    {
+                      src: "https://hyderabad.tie.org/wp-content/uploads/2025/02/TiE-Logo-Black.png",
+                      alt: "TiE"
+                    },
+                    {
+                      src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTjailEBhsb5i8VHPzdulQcAkPvi4QgkW_8W_YdO_GZtT0DqhyY0W04T3FNERQ_NHW9_n0&usqp=CAU",
+                      alt: "alpha"
+                    }
+                  ]
+                ].map((partner, index) => (
+                  <div 
+                    key={index}
+                    className="flex-shrink-0 h-16 w-32 sm:h-20 sm:w-40 bg-white rounded-lg shadow-sm hover:shadow-md transition-all duration-300 mx-4 flex items-center justify-center p-2"
+                    onMouseEnter={handleMouseEnter}
+                    onMouseLeave={handleMouseLeave}
+                    onTouchStart={handleTouchStart}
+                    onTouchEnd={handleTouchEnd}
+                  >
+                    <img
+                      src={partner.src}
+                      alt={partner.alt}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </div>
+                ))}
+              </motion.div>
             </div>
           </motion.div>
         </div>
