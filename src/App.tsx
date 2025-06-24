@@ -17,6 +17,7 @@ import AttendeeDashboard from './components/AttendeeDashboard';
 import EventPhotos from './components/EventPhotos';
 import MyPhotos from './components/MyPhotos';
 import MyOrganizations from './components/MyOrganizations';
+import OrganizationEvents from './components/OrganizationEvents';
 import { queryUserByEmail, storeUserCredentials } from './config/dynamodb';
 import { migrateLocalStorageToDb } from './config/eventStorage';
 import Login from './components/Login';
@@ -146,6 +147,15 @@ const App = () => {
               
               <Route path="/view-event/:eventId" element={<div className="animate-slideIn"><ViewEventWrapper /></div>} />
               <Route path="/my-organizations" element={<div className="animate-slideIn"><MyOrganizations setShowSignInModal={setShowSignInModal} /></div>} />
+              <Route path="/organization/:organizationCode" element={
+                <div className="animate-slideIn">
+                  <OrganizationEvents 
+                    organizationCode={useParams().organizationCode || ''} 
+                    organizationName="" 
+                    onBack={() => window.history.back()} 
+                  />
+                </div>
+              } />
               <Route path="/terms" element={<div className="animate-slideIn"><Terms /></div>} />
               <Route path="/privacy" element={<div className="animate-slideIn"><PrivacyPolicy /></div>} />
             </Routes>
@@ -159,7 +169,13 @@ const App = () => {
 
 const ViewEventWrapper = () => {
   const { eventId } = useParams();
-  return <ViewEvent eventId={eventId || ''} />;
+  
+  // If there's no eventId, redirect to home
+  if (!eventId) {
+    return <Navigate to="/" replace />;
+  }
+  
+  return <ViewEvent eventId={eventId} />;
 };
 
 export default App;

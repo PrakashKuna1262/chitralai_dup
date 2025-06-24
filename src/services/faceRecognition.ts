@@ -18,10 +18,10 @@ async function initializeRekognitionClient(): Promise<RekognitionClient> {
       throw new Error('Missing required environment variables for Rekognition');
     }
 
-    console.log('[DEBUG] faceRecognition.ts: Initializing Rekognition Client with:');
-    console.log('[DEBUG] faceRecognition.ts: Region:', env.VITE_AWS_REGION);
-    console.log('[DEBUG] faceRecognition.ts: Access Key ID (first 5 chars):', env.VITE_AWS_ACCESS_KEY_ID.substring(0, 5));
-    console.log('[DEBUG] faceRecognition.ts: Secret Access Key provided:', env.VITE_AWS_SECRET_ACCESS_KEY ? 'Yes' : 'No');
+    // console.log('[DEBUG] faceRecognition.ts: Initializing Rekognition Client with:');
+    // console.log('[DEBUG] faceRecognition.ts: Region:', env.VITE_AWS_REGION);
+    // console.log('[DEBUG] faceRecognition.ts: Access Key ID (first 5 chars):', env.VITE_AWS_ACCESS_KEY_ID.substring(0, 5));
+    // console.log('[DEBUG] faceRecognition.ts: Secret Access Key provided:', env.VITE_AWS_SECRET_ACCESS_KEY ? 'Yes' : 'No');
 
     rekognitionClientInstance = new RekognitionClient({
       region: env.VITE_AWS_REGION,
@@ -340,7 +340,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
       // Convert map to array and sort by similarity (highest first)
       const matches = Array.from(uniqueImageMatches.values())
         .sort((a, b) => b.similarity - a.similarity)
-        .filter(match => match.similarity >= 60); // Additional filter for minimum confidence
+        .filter(match => match.similarity >= 80); // Additional filter for minimum confidence
 
       // Log the final results
       console.log(`[DEBUG] faceRecognition.ts: Found ${matches.length} unique images with faces matching the selfie`);
@@ -375,7 +375,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
             }
           },
           MaxFaces: 50,
-          FaceMatchThreshold: 60
+          FaceMatchThreshold: 80
         });
 
         const retryResponse = await rekognitionClient.send(retryCommand);

@@ -171,18 +171,12 @@ const MyOrganizations: React.FC<MyOrganizationsProps> = ({ setShowSignInModal })
     if (!userEmail) return;
 
     try {
-      const selfieUrl = await getAttendeeSelfieURL(userEmail);
-      
-      if (!selfieUrl) {
-        // Redirect to AttendeeDashboard if no selfie is found
-        navigate('/attendee-dashboard');
-        return;
-      }
-
+      // Directly set the selected org without checking for selfie
+      // OrganizationEvents component will handle the selfie check and camera modal
       setSelectedOrg(org);
     } catch (error) {
-      console.error('Error checking selfie:', error);
-      setError('Failed to verify user profile');
+      console.error('Error:', error);
+      setError('Failed to load organization events');
     }
   };
 

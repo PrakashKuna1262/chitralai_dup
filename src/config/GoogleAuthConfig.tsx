@@ -3,6 +3,8 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import React, { useEffect, useState } from "react";
 
 const ALLOWED_ORIGINS = [
+  'https://chitralai.in',
+  'https://www.chitralai.in',
   'https://3dprinting.space',
   'http://localhost:3000',
   'http://localhost:5173',
