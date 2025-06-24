@@ -1012,10 +1012,53 @@ const UploadImage = () => {
         // Small delay to ensure state update is complete
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        // Modify uploadToS3WithRetryQueue to update total progress
-        const results = await uploadToS3WithRetryQueue(compressedFiles);
+        // Upload files to S3
+        const uploadedUrls = await uploadToS3WithRetryQueue(compressedFiles);
         
-        // Mark upload as complete before starting indexing
+        // Update the photo count in DynamoDB
+        const userEmail = localStorage.getItem('userEmail');
+        if (userEmail) {
+          const currentEvent = await getEventById(selectedEvent);
+          if (currentEvent) {
+            await updateEventData(selectedEvent, userEmail, {
+              photoCount: (currentEvent.photoCount || 0) + uploadedUrls.length
+            });
+          }
+        }
+        
+        // Index faces in the uploaded images
+        try {
+          setUploadProgress(prev => ({
+            ...prev!,
+            status: 'Indexing faces...',
+            currentFile: 'Indexing faces in uploaded images'
+          }));
+          
+          const { indexFacesBatch } = await import('../services/faceRecognition');
+          const imageKeys = uploadedUrls
+            .filter((url): url is string => !!url)
+            .map(url => {
+              const urlObj = new URL(url);
+              return decodeURIComponent(urlObj.pathname.substring(1)); // Remove leading '/' and decode
+            });
+            
+          if (imageKeys.length > 0) {
+            await indexFacesBatch(selectedEvent, imageKeys, (completed, total, currentImage) => {
+              setUploadProgress(prev => ({
+                ...prev!,
+                current: completed,
+                total,
+                currentFile: currentImage || 'Indexing faces...',
+                status: `Indexing faces (${completed}/${total})`
+              }));
+            });
+          }
+        } catch (indexError) {
+          console.error('Error during face indexing:', indexError);
+          // Don't fail the upload if indexing fails, just log it
+        }
+        
+        // Mark upload as complete
         setUploadSuccess(true);
         setShowQRModal(true);
         setImages([]);
@@ -1025,9 +1068,6 @@ const UploadImage = () => {
         console.error('Error during compression/upload:', error);
         throw error;
       }
-
-      // Rest of the existing code...
-
     } catch (error: unknown) {
       console.error('Error during upload:', error);
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';

@@ -187,13 +187,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       // Use searchFacesByImage to find matches
       const matches = await searchFacesByImage(event.id, selfiePath);
       
-      if (matches.length === 0) {
-        // Show popup instead of throwing error
-        showPopupMessage('No matching photos found in this event. Please try a different event.');
-        return;
-      }
-
-      // Store the matched images in DynamoDB with just the S3 paths
+      // Store the attendee data in DynamoDB regardless of matches
       await storeAttendeeImageData({
         userId: userEmail || '',
         eventId: event.id,
@@ -204,8 +198,14 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
         uploadedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString()
       });
-      
-      // Navigate to the photos page
+
+      if (matches.length === 0) {
+        // Show popup instead of throwing error
+        showPopupMessage('No matching photos found in this event. Please try a different event.');
+        return;
+      }
+
+      // Navigate to the photos page only if matches were found
       navigate(`/event-photos/${event.id}`);
       
     } catch (error: any) {
@@ -264,25 +264,25 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       // Use searchFacesByImage to find matches
       const matches = await searchFacesByImage(event.id, selfiePath);
       
-      if (matches.length === 0) {
-        // Show popup instead of throwing error
-        showPopupMessage('No matching photos found in this event. Please try taking another selfie or try a different event.');
-        return;
-      }
-
-      // Store the matched images in DynamoDB with just the S3 paths
+      // Store the attendee data in DynamoDB regardless of matches
       await storeAttendeeImageData({
-        userId: userEmail,
+        userId: userEmail || '',
         eventId: event.id,
         eventName: event.name,
-        coverImage: event.coverImage,
+        coverImage: event.coverImage || '',
         selfieURL: selfieUrl,
         matchedImages: matches.map(match => match.imageKey),
         uploadedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString()
       });
-      
-      // Navigate to the photos page
+
+      if (matches.length === 0) {
+        // Show popup instead of throwing error
+        showPopupMessage('No matching photos found in this event. Please try a different event.');
+        return;
+      }
+
+      // Navigate to the photos page only if matches were found
       navigate(`/event-photos/${event.id}`);
       
     } catch (error: any) {
