@@ -145,7 +145,7 @@ const App = () => {
               <Route path="/upload-image" element={<div className="animate-slideIn"><UploadImage /></div>} />
               
               <Route path="/view-event/:eventId" element={<div className="animate-slideIn"><ViewEventWrapper /></div>} />
-              <Route path="/my-organizations" element={<MyOrganizations />} />
+              <Route path="/my-organizations" element={<div className="animate-slideIn"><MyOrganizations setShowSignInModal={setShowSignInModal} /></div>} />
               <Route path="/terms" element={<div className="animate-slideIn"><Terms /></div>} />
               <Route path="/privacy" element={<div className="animate-slideIn"><PrivacyPolicy /></div>} />
             </Routes>

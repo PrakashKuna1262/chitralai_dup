@@ -950,35 +950,40 @@ const EventDashboard = (props: EventDashboardProps) => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-4 px-1">
-                    <div onClick={() => setShowAllEvents(!showAllEvents)} className="cursor-pointer transform hover:scale-105 transition-transform duration-200 w-[95%]">
+                <div className="flex flex-col sm:flex-row gap-3 md:gap-4 mb-4 px-1">
+                    {/* Total Events Card */}
+                    <div 
+                        onClick={() => setShowAllEvents(!showAllEvents)} 
+                        className={`cursor-pointer transform hover:scale-105 transition-transform duration-200 w-full ${userProfile?.organizationName ? 'sm:w-1/3' : 'sm:w-1/2'}`}
+                    >
                         <StatsCard
-                            icon={<Image className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-900" />}
+                            icon={<Image className="w-4 h-4 text-blue-900" />}
                             title="Total Events"
                             count={stats.eventCount}
                             bgColor="bg-gradient-to-br from-blue-100 to-blue-200"
                             titleColor="text-blue-900"
+                            className="h-full"
                         />
                     </div>
-                    <div className="transform hover:scale-105 transition-transform duration-200 w-[95%]">
+
+                    {/* Total Photos Card */}
+                    <div className={`transform hover:scale-105 transition-transform duration-200 w-full ${userProfile?.organizationName ? 'sm:w-1/3' : 'sm:w-1/2'}`}>
                         <StatsCard
-                            icon={<Camera className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-900" />}
+                            icon={<Camera className="w-4 h-4 text-blue-900" />}
                             title="Total Photos"
                             count={stats.photoCount}
                             bgColor="bg-gradient-to-br from-blue-200 to-blue-300"
                             titleColor="text-blue-900"
+                            className="h-full"
                         />
                     </div>
-                    
-                </div>
 
-                {/* Organization Info */}
-                {userProfile?.organizationLogo && (
-                    <div className="mb-8 p-6 bg-gradient-to-r from-white to-blue-50 rounded-lg shadow-md border border-blue-100">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-4">
+                    {/* Organization Info Card - Only show if organization exists */}
+                    {userProfile?.organizationName && (
+                        <div className="w-full sm:w-1/3">
+                            <div className="h-full p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg shadow-md flex items-center">
                                 {userProfile?.organizationLogo && (
-                                    <div className="relative h-16 w-16 rounded-full overflow-hidden border-2 border-blue-200 shadow-md">
+                                    <div className="relative h-12 w-12 rounded-full overflow-hidden border-2 border-blue-200 shadow-md flex-shrink-0">
                                         <img 
                                             src={userProfile.organizationLogo} 
                                             alt="Organization Logo" 
@@ -986,81 +991,114 @@ const EventDashboard = (props: EventDashboardProps) => {
                                         />
                                     </div>
                                 )}
-                                <div>
-                                    <span className="text-sm text-gray-500 font-medium">Organization Name</span>
-                                    <h2 className="text-xl font-semibold text-blue-900">
+                                <div className="ml-3 overflow-hidden">
+                                    <span className="text-xs text-gray-600 font-medium truncate">Organization</span>
+                                    <h2 className="text-sm font-semibold text-blue-900 truncate">
                                         {userProfile.organizationName}
                                     </h2>
                                 </div>
-                            </div>
-                            <button
-                                onClick={() => setShowQRCode(true)}
-                                className="flex items-center bg-blue-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors shadow-sm hover:shadow-md"
-                            >
-                                <QrCode size={16} className="mr-1.5" />
-                                Show QR
-                            </button>
-                        </div>
-                    </div>
-)}
-                    
-                    {/* QR Code Modal */}
-                    {showQRCode && (
-                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                            <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h3 className="text-lg font-semibold text-blue-900">Organization QR Code</h3>
-                                    <button
-                                        onClick={() => setShowQRCode(false)}
-                                        className="text-gray-500 hover:text-gray-700"
-                                    >
-                                        <X className="w-5 h-5" />
-                                    </button>
-                                </div>
-                                <div className="flex flex-col items-center gap-4">
-                                    <QRCodeSVG
-                                        ref={qrRef}
-                                        value={`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`}
-                                        size={200}
-                                        level="H"
-                                        includeMargin
-                                    />
-                                    {/* Organization Code Display */}
-                                    <div className="text-center mb-2">
-                                        <span className="text-sm text-gray-600">Organization Code:</span>
-                                        <div className="font-mono text-lg font-semibold text-blue-700 mt-1">{userProfile.organizationCode}</div>
-                                    </div>
-                                    <div className="flex items-center justify-center space-x-2">
-                                        <input
-                                            type="text"
-                                            readOnly
-                                            value={`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`}
-                                            className="text-sm bg-gray-100 border rounded px-3 py-2 w-64 text-gray-700"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                navigator.clipboard.writeText(`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`);
-                                                setCopiedCode(true);
-                                                setTimeout(() => setCopiedCode(false), 2000);
-                                            }}
-                                            className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
-                                        >
-                                            {copiedCode ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleDownloadQR}
-                                            className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 transition-colors"
-                                            title="Download QR"
-                                        >
-                                            <Download className="w-4 h-4" />
-                                        </button>
-                                    </div>
-                                </div>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowQRCode(true);
+                                    }}
+                                    className="ml-auto p-2 text-blue-600 hover:bg-blue-100 rounded-full transition-colors"
+                                    title="Show QR Code"
+                                >
+                                    <QrCode className="w-4 h-4" />
+                                </button>
                             </div>
                         </div>
                     )}
+                </div>
+
+                {/* QR Code Modal */}
+                {showQRCode && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+                            {/* Header */}
+                            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                                <h3 className="text-xl font-bold text-gray-900">Organization QR Code</h3>
+                                <button
+                                    onClick={() => setShowQRCode(false)}
+                                    className="text-gray-400 hover:text-gray-600 transition-colors p-1 -mr-2"
+                                    aria-label="Close modal"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                            
+                            {/* Content */}
+                            <div className="p-6">
+                                <div className="flex flex-col items-center space-y-6">
+                                    {/* QR Code */}
+                                    <div className="p-4 bg-white rounded-lg border border-gray-200">
+                                        <QRCodeSVG
+                                            ref={qrRef}
+                                            value={`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`}
+                                            size={200}
+                                            level="H"
+                                            includeMargin
+                                        />
+                                    </div>
+
+                                    {/* Organization Code */}
+                                    <div className="text-center">
+                                        <p className="text-sm font-medium text-gray-500 mb-1">Organization Code</p>
+                                        <div className="text-2xl font-bold text-blue-600 font-mono tracking-wider">
+                                            {userProfile.organizationCode}
+                                        </div>
+                                    </div>
+
+                                    {/* Shareable Link */}
+                                    <div className="w-full">
+                                        <label htmlFor="share-link" className="block text-sm font-medium text-gray-700 mb-1">
+                                            Shareable Link
+                                        </label>
+                                        <div className="flex flex-col sm:flex-row gap-2 w-full">
+                                            <div className="relative flex-grow">
+                                                <input
+                                                    id="share-link"
+                                                    type="text"
+                                                    readOnly
+                                                    value={`${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`}
+                                                    className="w-full px-4 py-2 pr-10 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(
+                                                            `${window.location.origin}/my-organizations?code=${userProfile.organizationCode}`
+                                                        );
+                                                        setCopiedCode(true);
+                                                        setTimeout(() => setCopiedCode(false), 2000);
+                                                    }}
+                                                    className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-500 hover:text-blue-600 transition-colors"
+                                                    title="Copy to clipboard"
+                                                >
+                                                    {copiedCode ? (
+                                                        <CheckCircle className="w-4 h-4 text-green-500" />
+                                                    ) : (
+                                                        <Copy className="w-4 h-4" />
+                                                    )}
+                                                </button>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleDownloadQR}
+                                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
+                                            >
+                                                <Download className="w-4 h-4" />
+                                                <span className="hidden sm:inline">Download</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 
 
                 {/* Create Event Modal */}
@@ -1179,17 +1217,19 @@ const EventDashboard = (props: EventDashboardProps) => {
 
                 {showAllEvents && events.length > 0 && (
                     <div className="mt-4 sm:mt-6">
-                        <div className="flex items-center gap-4">
-                        <h2 className="text-xl font-bold text-blue-900 mb-3 sm:mb-4">All Events</h2>
-                        <select
-                            className="border border-gray-300 rounded-md px-2 py-1 text-sm"
-                            value={sortOption}
-                            onChange={(e) => setSortOption(e.target.value as 'name' | 'date')}
-                        >
-                            <option value="date">Sort by Date</option>
-                            <option value="name">Sort by Name (A-Z)</option>
-                        </select>
-                    </div>
+                        <div className="flex flex-row justify-between items-center mb-3 sm:mb-4">
+                            <h2 className="text-xl font-bold text-blue-900">All Events</h2>
+                            <div className="w-40">
+                                <select
+                                    className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                    value={sortOption}
+                                    onChange={(e) => setSortOption(e.target.value as 'name' | 'date')}
+                                >
+                                    <option value="date">Sort by Date</option>
+                                    <option value="name">Sort by Name (A-Z)</option>
+                                </select>
+                            </div>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                             {Array.isArray(events) && sortedEvents.map((event) => (
                                 <div key={event.id} className="bg-gradient-to-br from-white to-blue-50 rounded-lg shadow-md border border-blue-200 overflow-hidden transform hover:scale-102 hover:shadow-lg transition-all duration-200">
@@ -1288,7 +1328,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                                     }}
                                                     className="p-1 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50"
                                                 >
-                                                    <Edit className="w-4 h-4" />
+                                                    <Edit className="w-3 h-3" />
                                                 </button>
                                             </div>
                                         )}
@@ -1350,7 +1390,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                                         }}
                                                         className="p-0.5 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50"
                                                     >
-                                                        <Edit className="w-4 h-4" />
+                                                        <Edit className="w-3 h-3" />
                                                     </button>
                                                 </div>
                                             )}
@@ -1383,9 +1423,11 @@ const EventDashboard = (props: EventDashboardProps) => {
                         </div>
                     </div>
                 )}
+            
             </div>
         </div>
     );
+    
 };
 
 export default EventDashboard;
