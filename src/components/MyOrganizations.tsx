@@ -18,7 +18,11 @@ interface Organization {
   joinedAt: string;
 }
 
-const MyOrganizations: React.FC = () => {
+interface MyOrganizationsProps {
+  setShowSignInModal: (show: boolean) => void;
+}
+
+const MyOrganizations: React.FC<MyOrganizationsProps> = ({ setShowSignInModal }) => {
   const { userEmail } = useContext(UserContext);
   const navigate = useNavigate();
   const [organizationId, setOrganizationId] = useState(() => {
@@ -30,6 +34,20 @@ const MyOrganizations: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
+
+  // Check for organization code in URL and show sign in modal if needed
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const orgCode = urlParams.get('code');
+    
+    if (orgCode && !userEmail) {
+      // Store information for redirect after login
+      localStorage.setItem('pendingAction', 'getPhotos');
+      localStorage.setItem('pendingRedirectUrl', window.location.href);
+      // Show sign in modal
+      setShowSignInModal(true);
+    }
+  }, [userEmail, setShowSignInModal]);
 
   // Load organizations from DynamoDB on mount and handle direct organization link
   useEffect(() => {
