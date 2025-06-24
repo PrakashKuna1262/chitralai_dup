@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, ImageIcon, ArrowLeft } from 'lucide-react';
+import { Calendar, ImageIcon, ArrowLeft, Camera, X, AlertCircle } from 'lucide-react';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { getEventsViaUserByOrgCode, storeAttendeeImageData, getAttendeeSelfieURL, getMatchedImages } from '../config/dynamodb';
 import { searchFacesByImage } from '../services/faceRecognition';
 import { UserContext } from '../App';
+import { Upload } from '@aws-sdk/lib-storage';
 
 interface Event {
   id: string;
@@ -34,6 +35,28 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
   const [processingEventId, setProcessingEventId] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  // Camera modal state and refs
+  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
+
+  // Popup message state
+  const [showPopup, setShowPopup] = useState(false);
+  const [popupMessage, setPopupMessage] = useState('');
+
+  // Function to show popup message
+  const showPopupMessage = (message: string) => {
+    setPopupMessage(message);
+    setShowPopup(true);
+    // Auto hide after 5 seconds
+    setTimeout(() => {
+      setShowPopup(false);
+      setPopupMessage('');
+    }, 5000);
+  };
+
   useEffect(() => {
     const loadEvents = async () => {
       try {
@@ -49,6 +72,150 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
 
     loadEvents();
   }, [organizationCode]);
+
+  // Camera control functions
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      setStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      setError('Could not access camera. Please make sure you have granted camera permissions.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  const captureImage = async () => {
+    if (!videoRef.current || !currentEvent) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(videoRef.current, 0, 0);
+    canvas.toBlob(async (blob) => {
+      if (blob) {
+        const file = new File([blob], 'selfie.jpg', { type: 'image/jpeg' });
+        stopCamera();
+        setShowCameraModal(false);
+        setIsCameraActive(false);
+
+        try {
+          // Upload the selfie
+          await uploadSelfie(file, currentEvent);
+        } catch (error: any) {
+          console.error('Error uploading selfie:', error);
+          setError(error.message || 'Failed to upload selfie. Please try again.');
+        }
+      }
+    }, 'image/jpeg');
+  };
+
+  // Function to upload selfie to S3
+  const uploadSelfie = async (file: File, event: Event) => {
+    setError(null);
+    setProcessingStatus('Updating your selfie...');
+    const { bucketName } = await validateEnvVariables();
+
+    try {
+      // Generate a unique filename
+      const timestamp = Date.now();
+      const fileName = `selfie-${timestamp}-${file.name}`;
+      const selfiePath = `users/${userEmail}/selfies/${fileName}`;
+      
+      // Convert File to arrayBuffer and then to Uint8Array
+      const buffer = await file.arrayBuffer();
+      const uint8Array = new Uint8Array(buffer);
+      
+      // Upload selfie to S3
+      const upload = new Upload({
+        client: await s3ClientPromise,
+        params: {
+          Bucket: bucketName,
+          Key: selfiePath,
+          Body: uint8Array,
+          ContentType: file.type,
+          ACL: 'public-read'
+        },
+        partSize: 1024 * 1024 * 5
+      });
+      
+      await upload.done();
+      
+      // Get the public URL of the uploaded selfie
+      const selfieUrl = `https://${bucketName}.s3.amazonaws.com/${selfiePath}`;
+      
+      // Start the face comparison process
+      await performFaceComparison(event, selfieUrl);
+      
+    } catch (error: any) {
+      console.error('Error uploading selfie:', error);
+      setError(error.message || 'Failed to upload selfie. Please try again.');
+      setProcessingStatus(null);
+    }
+  };
+
+  // Function to perform face comparison
+  const performFaceComparison = async (event: Event, selfieUrl: string) => {
+    try {
+      setProcessingStatus('Finding your photos...');
+      
+      // Extract the S3 key from the selfie URL
+      const { bucketName } = await validateEnvVariables();
+      let selfiePath = '';
+      
+      if (selfieUrl.startsWith(`https://${bucketName}.s3.amazonaws.com/`)) {
+        selfiePath = selfieUrl.substring(`https://${bucketName}.s3.amazonaws.com/`.length);
+      } else {
+        throw new Error('Invalid selfie format.');
+      }
+
+      // Use searchFacesByImage to find matches
+      const matches = await searchFacesByImage(event.id, selfiePath);
+      
+      if (matches.length === 0) {
+        // Show popup instead of throwing error
+        showPopupMessage('No matching photos found in this event. Please try a different event.');
+        return;
+      }
+
+      // Store the matched images in DynamoDB with just the S3 paths
+      await storeAttendeeImageData({
+        userId: userEmail || '',
+        eventId: event.id,
+        eventName: event.name,
+        coverImage: event.coverImage || '',
+        selfieURL: selfieUrl,
+        matchedImages: matches.map(match => match.imageKey),
+        uploadedAt: new Date().toISOString(),
+        lastUpdated: new Date().toISOString()
+      });
+      
+      // Navigate to the photos page
+      navigate(`/event-photos/${event.id}`);
+      
+    } catch (error: any) {
+      console.error('Error processing photos:', error);
+      showPopupMessage(error.message || 'Failed to process photos');
+    } finally {
+      setProcessingStatus(null);
+      setProcessingEventId(null);
+    }
+  };
 
   const handleViewPhotos = async (event: Event) => {
     if (!userEmail) {
@@ -74,7 +241,14 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       const selfieUrl = await getAttendeeSelfieURL(userEmail);
       
       if (!selfieUrl) {
-        throw new Error('No selfie found. Please update your selfie first.');
+        // Show camera modal instead of throwing error
+        setCurrentEvent(event);
+        setShowCameraModal(true);
+        setIsCameraActive(true);
+        startCamera();
+        setProcessingStatus(null);
+        setProcessingEventId(null);
+        return;
       }
 
       // Extract the S3 key from the selfie URL
@@ -91,7 +265,9 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       const matches = await searchFacesByImage(event.id, selfiePath);
       
       if (matches.length === 0) {
-        throw new Error('No matching photos found in this event.');
+        // Show popup instead of throwing error
+        showPopupMessage('No matching photos found in this event. Please try taking another selfie or try a different event.');
+        return;
       }
 
       // Store the matched images in DynamoDB with just the S3 paths
@@ -111,7 +287,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       
     } catch (error: any) {
       console.error('Error processing photos:', error);
-      setError(error.message || 'Failed to process photos');
+      showPopupMessage(error.message || 'Failed to process photos');
     } finally {
       setProcessingStatus(null);
       setProcessingEventId(null);
@@ -210,6 +386,71 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Camera Modal */}
+        {showCameraModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full relative">
+              <button
+                onClick={() => {
+                  stopCamera();
+                  setShowCameraModal(false);
+                  setError(null);
+                }}
+                className="absolute -top-3 -right-3 bg-white text-gray-700 rounded-full p-2 shadow-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
+              <h3 className="text-xl font-semibold text-gray-900 mb-4">Take a Selfie</h3>
+              
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg">
+                  {error}
+                </div>
+              )}
+              
+              <div className="relative w-full">
+                {isCameraActive && (
+                  <div className="mb-4">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      className="w-full rounded-lg border-2 border-blue-500"
+                      style={{ transform: 'scaleX(-1)' }} // Mirror the video feed
+                    />
+                    
+                    <button
+                      onClick={captureImage}
+                      className="mt-4 w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center"
+                    >
+                      <Camera className="w-5 h-5 mr-2" />
+                      Capture Selfie
+                    </button>
+                  </div>
+                )}
+                
+                {!isCameraActive && processingStatus && (
+                  <div className="flex items-center justify-center p-6">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600 mr-3"></div>
+                    <p className="text-blue-600">{processingStatus}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Popup Message */}
+        {showPopup && (
+          <div className="fixed inset-x-0 top-20 sm:top-24 z-[60] flex items-center justify-center px-4 pointer-events-none">
+            <div className="bg-red-50 text-red-600 px-6 py-4 rounded-lg shadow-lg max-w-md w-full flex items-start space-x-3">
+              <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+              <p className="text-sm font-medium">{popupMessage}</p>
+            </div>
           </div>
         )}
       </div>

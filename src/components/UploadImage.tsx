@@ -29,6 +29,8 @@ interface UploadProgress {
   processedBytes: number;
   totalBytes: number;
   startTime: number;
+  optimizationStartTime: number;
+  processedImages: number;
 }
 
 interface FileProgress {
@@ -857,6 +859,15 @@ const UploadImage = () => {
 
   // Optimize handleUpload function
   const handleUpload = useCallback(async () => {
+    // Clear any lingering justLoggedIn flag to prevent unintended reloads
+    sessionStorage.removeItem('justLoggedIn');
+
+    // Prevent multiple concurrent uploads
+    if (isUploading) {
+      console.log('Upload already in progress');
+      return;
+    }
+
     if (images.length === 0) {
       alert('Please select at least one image to upload.');
       return;
@@ -866,25 +877,31 @@ const UploadImage = () => {
       return;
     }
 
-    setIsUploading(true);
-    setUploadSuccess(false);
-    
-    const uploadStartTime = Date.now();
-    const totalCount = images.length;
-    const totalBytes = images.reduce((sum, file) => sum + file.size, 0);
-    
-    setUploadProgress({
-      current: 0,
-      total: totalCount,
-      stage: 'optimizing',
-      processedBytes: 0,
-      totalBytes,
-      startTime: uploadStartTime,
-      uploadSpeed: 0,
-      estimatedTimeRemaining: 0
-    });
-
     try {
+      setIsUploading(true);
+      setUploadSuccess(false);
+      
+      const uploadStartTime = Date.now();
+      const totalCount = images.length;
+      const totalBytes = images.reduce((sum, file) => sum + file.size, 0);
+      
+      // Initialize progress with overall tracking
+      const initialProgress = {
+        current: 0,
+        total: totalCount,
+        stage: 'optimizing' as const,
+        processedBytes: 0,
+        totalBytes,
+        startTime: uploadStartTime,
+        uploadSpeed: 0,
+        estimatedTimeRemaining: 0,
+        currentFile: '',
+        optimizationStartTime: Date.now(),
+        processedImages: 0
+      };
+      
+      setUploadProgress(initialProgress);
+
       // Get existing images from the event to check for duplicates
       const currentEvent = await getEventById(selectedEvent);
       if (!currentEvent) {
@@ -935,115 +952,81 @@ const UploadImage = () => {
       // Calculate total original size of unique images being uploaded in bytes
       const totalOriginalSizeBytes = uniqueImages.reduce((sum, file) => sum + file.size, 0);
       
-      // Calculate compressed sizes
-      let totalCompressedSizeBytes = 0;
-      const compressedFiles: File[] = [];
-      
-      for (let i = 0; i < uniqueImages.length; i++) {
-        const file = uniqueImages[i];
-        setUploadProgress(prev => ({
-          ...prev!,
-          current: i,
-          total: uniqueImages.length,
-          stage: 'optimizing',
-          currentFile: file.name,
-          processedBytes: totalCompressedSizeBytes,
-          totalBytes: totalOriginalSizeBytes,
-          estimatedTimeRemaining: prev?.estimatedTimeRemaining
-        }));
-
-        const compressionStart = Date.now();
-        const compressedBlob = await compressImage(file);
-        const compressedFile = new File([compressedBlob], file.name, { type: file.type });
-        totalCompressedSizeBytes += compressedBlob.size;
-        compressedFiles.push(compressedFile);
-
-        // Update compression progress
-        const compressionTime = Date.now() - compressionStart;
-        const remainingFiles = uniqueImages.length - (i + 1);
-        const estimatedCompressionTimeRemaining = (compressionTime * remainingFiles) / 1000; // Convert to seconds
-
-        setUploadProgress(prev => ({
-          ...prev!,
-          estimatedTimeRemaining: estimatedCompressionTimeRemaining,
-          processedBytes: totalCompressedSizeBytes,
-          totalBytes: totalOriginalSizeBytes
-        }));
-      }
-      
-      // Convert both sizes to appropriate units
-      const { size: totalOriginalSize, unit: totalOriginalUnit } = convertToAppropriateUnit(totalOriginalSizeBytes);
-      const { size: totalCompressedSize, unit: totalCompressedUnit } = convertToAppropriateUnit(totalCompressedSizeBytes);
-      
-      // Process only unique files using the optimized upload queue
-      setUploadProgress(prev => ({
-        ...prev!,
-        stage: 'uploading',
-        processedBytes: 0,
-        totalBytes: totalCompressedSizeBytes,
-        uploadSpeed: 0
-      }));
-
-      const results = await uploadToS3WithRetryQueue(compressedFiles);
-      
-      // Mark upload as complete before starting indexing
-      setUploadSuccess(true);
-      setShowQRModal(true);
-      setImages([]);
-      setTotalSize(0);
-      setIsUploading(false);
-
-      // Do indexing in the background
-      if (results.length > 0) {
-        const imageKeys = results.map(url => {
-          const filename = url.split('/').pop();
-          return `events/shared/${selectedEvent}/images/${filename}`;
-        }).filter(key => key);
+      try {
+        // Calculate compressed sizes
+        let totalCompressedSizeBytes = 0;
+        const compressedFiles: File[] = [];
+        const optimizationStartTime = Date.now();
+        let totalOptimizationTime = 0;
         
-        if (imageKeys.length > 0) {
+        for (let i = 0; i < uniqueImages.length; i++) {
+          const file = uniqueImages[i];
+          const imageStartTime = Date.now();
+
           try {
-            const indexingResult = await indexFacesBatch(selectedEvent, imageKeys);
-            console.log(`Face indexing completed: ${indexingResult.successful.length} successful, ${indexingResult.failed.length} failed`);
-            
-            if (indexingResult.failed.length > 0) {
-              console.warn('Some images failed to index:', indexingResult.failed);
-            }
-          } catch (error) {
-            // Just log indexing errors, don't show to user
-            console.error('Error during face indexing:', error);
+            const compressedBlob = await compressImage(file);
+            const compressedFile = new File([compressedBlob], file.name, { type: file.type });
+            totalCompressedSizeBytes += compressedBlob.size;
+            compressedFiles.push(compressedFile);
+
+            // Calculate average time per image and estimate remaining time
+            totalOptimizationTime = Date.now() - optimizationStartTime;
+            const averageTimePerImage = totalOptimizationTime / (i + 1);
+            const remainingImages = uniqueImages.length - (i + 1);
+            const estimatedRemainingTime = (averageTimePerImage * remainingImages) / 1000; // Convert to seconds
+
+            setUploadProgress(prev => ({
+              ...prev!,
+              current: i + 1,
+              total: uniqueImages.length,
+              stage: 'optimizing',
+              currentFile: file.name,
+              processedBytes: totalCompressedSizeBytes,
+              totalBytes: totalOriginalSizeBytes,
+              estimatedTimeRemaining: estimatedRemainingTime,
+              processedImages: i + 1
+            }));
+
+            // Force garbage collection of the original blob
+            URL.revokeObjectURL(URL.createObjectURL(compressedBlob));
+          } catch (compressionError) {
+            console.error('Error compressing file:', file.name, compressionError);
+            totalCompressedSizeBytes += file.size;
+            compressedFiles.push(file);
           }
         }
 
-        // Update event data
-        const userEmail = localStorage.getItem('userEmail');
-        if (userEmail) {
-          try {
-            const { size: newTotalOriginalSize, unit: newTotalOriginalUnit } = addSizes(
-              currentEvent.totalImageSize || 0,
-              currentEvent.totalImageSizeUnit || 'MB',
-              totalOriginalSize,
-              totalOriginalUnit
-            );
+        // Safely transition to upload stage with new time tracking
+        const uploadStartTime = Date.now();
+        setUploadProgress(prev => ({
+          ...prev!,
+          stage: 'uploading',
+          processedBytes: 0,
+          totalBytes: totalCompressedSizeBytes,
+          uploadSpeed: 0,
+          startTime: uploadStartTime,
+          estimatedTimeRemaining: 0,
+          processedImages: 0
+        }));
 
-            const { size: newTotalCompressedSize, unit: newTotalCompressedUnit } = addSizes(
-              currentEvent.totalCompressedSize || 0,
-              currentEvent.totalCompressedSizeUnit || 'MB',
-              totalCompressedSize,
-              totalCompressedUnit
-            );
+        // Small delay to ensure state update is complete
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-            await updateEventData(selectedEvent, userEmail, {
-              photoCount: (currentEvent.photoCount || 0) + results.length,
-              totalImageSize: newTotalOriginalSize,
-              totalImageSizeUnit: newTotalOriginalUnit,
-              totalCompressedSize: newTotalCompressedSize,
-              totalCompressedSizeUnit: newTotalCompressedUnit
-            });
-          } catch (error) {
-            console.error('Error updating event data:', error);
-          }
-        }
+        // Modify uploadToS3WithRetryQueue to update total progress
+        const results = await uploadToS3WithRetryQueue(compressedFiles);
+        
+        // Mark upload as complete before starting indexing
+        setUploadSuccess(true);
+        setShowQRModal(true);
+        setImages([]);
+        setTotalSize(0);
+
+      } catch (error) {
+        console.error('Error during compression/upload:', error);
+        throw error;
       }
+
+      // Rest of the existing code...
 
     } catch (error: unknown) {
       console.error('Error during upload:', error);
@@ -1450,17 +1433,19 @@ const UploadImage = () => {
                       <div className="flex flex-col space-y-1 text-sm text-gray-600">
                         <div className="flex justify-between items-center">
                           <span className="font-medium">
-                            {uploadProgress.stage === 'optimizing' && 'Optimizing images'}
-                            {uploadProgress.stage === 'uploading' && 'Uploading to cloud'}
+                            {uploadProgress.stage === 'optimizing' && `Optimizing images `}
+                            {uploadProgress.stage === 'uploading' && `Uploading to cloud `}
                           </span>
                           <span>
                             {Math.round((uploadProgress.processedBytes / uploadProgress.totalBytes) * 100)}%
                           </span>
                         </div>
-                        {/* Show time remaining for all images combined */}
+                        {/* Show time remaining for all images */}
                         {uploadProgress.estimatedTimeRemaining !== undefined && uploadProgress.estimatedTimeRemaining > 0 && (
                           <div className="flex justify-between items-center text-xs text-gray-500">
-                            <span>Time remaining</span>
+                            <span>
+                              {uploadProgress.stage === 'optimizing' ? 'Optimization time remaining' : 'Upload time remaining'}
+                            </span>
                             <span>{formatTimeRemaining(uploadProgress.estimatedTimeRemaining)}</span>
                           </div>
                         )}
