@@ -1015,13 +1015,25 @@ const UploadImage = () => {
         // Upload files to S3
         const uploadedUrls = await uploadToS3WithRetryQueue(compressedFiles);
         
-        // Update the photo count in DynamoDB
+        // Update the photo count and sizes in DynamoDB
         const userEmail = localStorage.getItem('userEmail');
         if (userEmail) {
           const currentEvent = await getEventById(selectedEvent);
           if (currentEvent) {
+            // Calculate the new total size including the compressed size of new uploads
+            const totalOriginalSize = (currentEvent.totalImageSize || 0) + totalOriginalSizeBytes;
+            const totalCompressedSize = (currentEvent.totalCompressedSize || 0) + totalCompressedSizeBytes;
+            
+            // Convert to appropriate units
+            const originalSize = convertToAppropriateUnit(totalOriginalSize);
+            const compressedSize = convertToAppropriateUnit(totalCompressedSize);
+            
             await updateEventData(selectedEvent, userEmail, {
-              photoCount: (currentEvent.photoCount || 0) + uploadedUrls.length
+              photoCount: (currentEvent.photoCount || 0) + uploadedUrls.length,
+              totalImageSize: originalSize.size,
+              totalImageSizeUnit: originalSize.unit,
+              totalCompressedSize: compressedSize.size,
+              totalCompressedSizeUnit: compressedSize.unit
             });
           }
         }

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Phone, Building2, Upload } from 'lucide-react';
 import { GoogleLogin } from '@react-oauth/google';
+import { Link } from 'react-router-dom';
 
 interface PhoneVerificationProps {
   onSubmit: (data: {
@@ -26,6 +27,7 @@ const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   const [isOrganization, setIsOrganization] = useState(false);
   const [organizationName, setOrganizationName] = useState('');
   const [organizationLogo, setOrganizationLogo] = useState<File | null>(null);
+  const [acceptedTerms, setAcceptedTerms] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showOrgFields, setShowOrgFields] = useState(true);
 
@@ -64,6 +66,11 @@ const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   const handleGoogleSignIn = (response: any) => {
     if (!isPhoneValid) {
       setError('Please enter a valid phone number first');
+      return;
+    }
+
+    if (isSignUp && !acceptedTerms) {
+      setError('Please read and accept the Terms & Conditions');
       return;
     }
 
@@ -107,6 +114,14 @@ const PhoneVerification: React.FC<PhoneVerificationProps> = ({
       organizationName: isOrganization ? organizationName : undefined,
       organizationLogo: isOrganization && organizationLogo ? organizationLogo : undefined
     });
+  };
+
+  const isFormValid = () => {
+    const phoneValid = isPhoneValid;
+    const termsAccepted = !isSignUp || acceptedTerms;
+    const orgValid = !showOrgFields || !isOrganization || (organizationName && organizationLogo);
+    
+    return phoneValid && termsAccepted && orgValid;
   };
 
   return (
@@ -191,11 +206,38 @@ const PhoneVerification: React.FC<PhoneVerificationProps> = ({
           </>
         )}
 
+        {/* Terms and Conditions Checkbox - Only show during sign up */}
+        {isSignUp && (
+          <div className="flex items-start space-x-3 pt-4">
+            <input
+              type="checkbox"
+              id="acceptTerms"
+              checked={acceptedTerms}
+              onChange={(e) => setAcceptedTerms(e.target.checked)}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mt-0.5"
+            />
+            <div className="flex-1">
+              <label htmlFor="acceptTerms" className="block text-sm text-gray-900">
+                I have read the {' '}
+                <Link 
+                  to="/terms" 
+                  target="_blank" 
+                  className="text-blue-600 hover:text-blue-800 underline font-medium"
+                >
+                  Terms & Conditions
+                </Link>
+                
+              </label>
+              
+            </div>
+          </div>
+        )}
+
         {error && (
           <p className="mt-2 text-sm text-red-600">{error}</p>
         )}
 
-        <div className={`transition-opacity duration-300 ${isPhoneValid && (!showOrgFields || !isOrganization || (organizationName && organizationLogo)) ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+        <div className={`transition-opacity duration-300 ${isFormValid() ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
           <GoogleLogin 
             onSuccess={handleGoogleSignIn}
             onError={onError}

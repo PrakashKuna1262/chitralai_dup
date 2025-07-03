@@ -82,7 +82,7 @@ const FAQ = () => {
                   x: ['0%', '-100%'],
                 }}
                 transition={{
-                  duration: 60,
+                  duration: 10,
                   repeat: Infinity,
                   ease: 'linear',
                 }}

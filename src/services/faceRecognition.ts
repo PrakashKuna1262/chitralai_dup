@@ -6,7 +6,6 @@ import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 let rekognitionClientInstance: RekognitionClient | null = null;
 let rekognitionClientInitializationPromise: Promise<RekognitionClient> | null = null;
-
 async function initializeRekognitionClient(): Promise<RekognitionClient> {
   if (rekognitionClientInstance) return rekognitionClientInstance;
   if (rekognitionClientInitializationPromise) return rekognitionClientInitializationPromise;
@@ -292,7 +291,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
           }
         },
         MaxFaces: 50,
-        FaceMatchThreshold: 85 // Minimum similarity threshold
+        FaceMatchThreshold: 80 // Minimum similarity threshold
       });
 
       const response = await rekognitionClient.send(command);
@@ -375,7 +374,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
             }
           },
           MaxFaces: 50,
-          FaceMatchThreshold: 85
+          FaceMatchThreshold: 80
         });
 
         const retryResponse = await rekognitionClient.send(retryCommand);
@@ -401,7 +400,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
         // Convert map to array and sort by similarity
         return Array.from(uniqueRetryMatches.values())
           .sort((a, b) => b.similarity - a.similarity)
-          .filter(match => match.similarity >= 85);
+          .filter(match => match.similarity >= 60);
       }
       
       // For other errors, throw them

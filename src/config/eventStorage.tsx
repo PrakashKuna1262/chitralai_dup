@@ -539,27 +539,90 @@ export const getEventsByUserId = async (userId: string): Promise<EventData[]> =>
 // Function to update organization code for existing events
 export const updateEventsWithOrganizationCode = async (userEmail: string, organizationCode: string): Promise<boolean> => {
   try {
-    // Get all events for the user
-    const events = await getUserEvents(userEmail);
+    console.log(`Updating events for user ${userEmail} with organization code ${organizationCode}`);
+    
+    // Get all events for this user
+    const userEvents = await getUserEvents(userEmail);
+    
+    if (userEvents.length === 0) {
+      console.log('No events found for user');
+      return true;
+    }
+    
+    const ddbDocClient = await docClientPromise;
     
     // Update each event with the organization code
-    for (const event of events) {
-      const command = new PutCommand({
+    for (const event of userEvents) {
+      const updateCommand = new UpdateCommand({
         TableName: EVENTS_TABLE,
-        Item: {
-          ...event,
-          organizationCode,
-          updatedAt: new Date().toISOString()
+        Key: {
+          eventId: event.id
+        },
+        UpdateExpression: 'SET organizationCode = :organizationCode, updatedAt = :updatedAt',
+        ExpressionAttributeValues: {
+          ':organizationCode': organizationCode,
+          ':updatedAt': new Date().toISOString()
         }
       });
       
-      await (await docClientPromise).send(command);
-      console.log(`Updated organization code for event ${event.id}`);
+      await ddbDocClient.send(updateCommand);
+      console.log(`Updated event ${event.id} with organization code ${organizationCode}`);
     }
     
+    console.log(`Successfully updated ${userEvents.length} events with organization code`);
     return true;
   } catch (error) {
-    console.error("Error updating events with organization code:", error);
+    console.error('Error updating events with organization code:', error);
+    return false;
+  }
+};
+
+// Update organization name across all events for a specific organization code
+export const updateOrganizationNameAcrossEvents = async (organizationCode: string, newOrganizationName: string): Promise<boolean> => {
+  try {
+    console.log(`Updating organization name to "${newOrganizationName}" for organization code ${organizationCode}`);
+    
+    // Get all events for this organization code
+    const command = new ScanCommand({
+      TableName: EVENTS_TABLE,
+      FilterExpression: 'organizationCode = :organizationCode',
+      ExpressionAttributeValues: {
+        ':organizationCode': organizationCode
+      }
+    });
+
+    const response = await (await docClientPromise).send(command);
+    const events = response.Items || [];
+    
+    if (events.length === 0) {
+      console.log('No events found for organization code');
+      return true;
+    }
+    
+    const ddbDocClient = await docClientPromise;
+    
+    // Update each event with the new organization name
+    for (const event of events) {
+      const updateCommand = new UpdateCommand({
+        TableName: EVENTS_TABLE,
+        Key: {
+          eventId: event.eventId || event.id
+        },
+        UpdateExpression: 'SET organizationName = :organizationName, updatedAt = :updatedAt',
+        ExpressionAttributeValues: {
+          ':organizationName': newOrganizationName,
+          ':updatedAt': new Date().toISOString()
+        }
+      });
+      
+      await ddbDocClient.send(updateCommand);
+      console.log(`Updated event ${event.eventId || event.id} with organization name "${newOrganizationName}"`);
+    }
+    
+    console.log(`Successfully updated ${events.length} events with organization name "${newOrganizationName}"`);
+    return true;
+  } catch (error) {
+    console.error('Error updating organization name across events:', error);
     return false;
   }
 };
