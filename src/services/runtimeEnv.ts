@@ -4,6 +4,7 @@ interface AppRuntimeEnv {
   VITE_GOOGLE_CLIENT_ID?: string;
   VITE_AWS_ACCESS_KEY_ID?: string;
   VITE_AWS_SECRET_ACCESS_KEY?: string;
+  VITE_GOOGLE_CLIENT_SECRET?: string;
   // Define other environment variables that the frontend will fetch
 }
 
@@ -36,6 +37,7 @@ async function fetchRuntimeEnvFromServer(): Promise<AppRuntimeEnv> {
         'VITE_GOOGLE_CLIENT_ID',
         'VITE_AWS_ACCESS_KEY_ID',
         'VITE_AWS_SECRET_ACCESS_KEY'
+        
       ];
       const missingVars = requiredVars.filter(varName => !data[varName]);
       

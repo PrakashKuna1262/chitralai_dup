@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Camera, Image, Video, Users, Plus, X, Trash2, Copy, RefreshCw, CheckCircle, Edit, QrCode, Download } from 'lucide-react';
+import { Camera, Image, Video, Users, Plus, X, Trash2, Copy, RefreshCw, CheckCircle, Edit, QrCode, Download, Search } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
     storeEventData, 
@@ -11,7 +11,8 @@ import {
     getEventsByOrganizerId,
     getEventsByUserId,
     getEventById,
-    updateEventsWithOrganizationCode
+    updateEventsWithOrganizationCode,
+    updateOrganizationNameAcrossEvents
 } from '../config/eventStorage';
 import s3ClientPromise, { validateEnvVariables } from '../config/aws';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -120,22 +121,47 @@ const EventDashboard = (props: EventDashboardProps) => {
     const [sortOption, setSortOption] = useState<'name' | 'date'>('date');
     const [showQRCode, setShowQRCode] = useState(false);
 
-    // Add these states near the top of the EventDashboard component
+    // State for event editing
     const [editMode, setEditMode] = useState<{eventId: string; type: 'name' | 'date' | 'coverImage'} | null>(null);
     const [editedName, setEditedName] = useState('');
-    const [editedDate, setEditedDate] = useState('');
 
-    // Add this to the EventDashboard component near other state declarations
-    const [imageOrientations, setImageOrientations] = useState<Record<string, 'landscape' | 'portrait' | 'unknown'>>({});
+    // State for image orientations
+    // Image orientations state (currently unused but kept for future use)
+    const [, setImageOrientations] = useState<Record<string, 'landscape' | 'portrait' | 'unknown'>>({});
+
+    // State for organization logo upload
+    const [isUploadingOrgLogo, setIsUploadingOrgLogo] = useState(false);
+
+    // State for organization name editing
+    const [isEditingOrgName, setIsEditingOrgName] = useState(false);
+    const [editedOrgName, setEditedOrgName] = useState('');
+    
+    // State for editing event date
+    const [editedDate, setEditedDate] = useState('');
+    const [isUpdatingOrgName, setIsUpdatingOrgName] = useState(false);
+
+    // Add search state
+    const [searchQuery, setSearchQuery] = useState('');
 
     // Sort events based on selected option
-    const sortedEvents = [...events].sort((a, b) => {
-        if (sortOption === 'name') {
-            return a.name.localeCompare(b.name);
-        } else {
-            return new Date(b.date).getTime() - new Date(a.date).getTime();
-        }
-    });
+    const sortedEvents = React.useMemo(() => 
+        [...events].sort((a, b) => {
+            if (sortOption === 'name') {
+                return a.name.localeCompare(b.name);
+            } else {
+                return new Date(b.date).getTime() - new Date(a.date).getTime();
+            }
+        }),
+        [events, sortOption]
+    );
+
+    // Filter events based on search query
+    const filteredEvents = React.useMemo(() => 
+        sortedEvents.filter(event =>
+            event.name.toLowerCase().includes(searchQuery.toLowerCase())
+        ),
+        [sortedEvents, searchQuery]
+    );
 
     const qrRef = useRef<SVGSVGElement | null>(null);
 
@@ -725,8 +751,6 @@ const EventDashboard = (props: EventDashboardProps) => {
             await loadEvents();
             setEditMode(null);
             setEditedName('');
-            setEditedDate('');
-
         } catch (error) {
             console.error('Error updating event:', error);
             alert('Failed to update event. Please try again.');
@@ -758,7 +782,6 @@ const EventDashboard = (props: EventDashboardProps) => {
         }
     };
 
-    // Update the handleEditCoverImage function
     // Update the handleEditCoverImage function
     const handleEditCoverImage = async (event: React.ChangeEvent<HTMLInputElement>, eventId: string) => {
         if (event.target.files && event.target.files[0]) {
@@ -854,28 +877,142 @@ const EventDashboard = (props: EventDashboardProps) => {
     };
 
     const handleDownloadQR = () => {
-        if (!qrRef.current) return;
-        const svg = qrRef.current;
-        const serializer = new XMLSerializer();
-        const svgString = serializer.serializeToString(svg);
+        if (qrRef.current) {
+            const svg = qrRef.current;
+            const svgData = new XMLSerializer().serializeToString(svg);
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new window.Image();
+            
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx?.drawImage(img, 0, 0);
+                const pngFile = canvas.toDataURL('image/png');
+                const downloadLink = document.createElement('a');
+                downloadLink.download = `organization-qr-${userProfile.organizationCode}.png`;
+                downloadLink.href = pngFile;
+                downloadLink.click();
+            };
+            
+            img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+        }
+    };
 
-        // Create a canvas and draw the SVG onto it
-        const canvas = document.createElement('canvas');
-        canvas.width = 200;
-        canvas.height = 200;
-        const ctx = canvas.getContext('2d');
-        const img = new window.Image();
-        img.onload = () => {
-            ctx?.drawImage(img, 0, 0);
-            const pngUrl = canvas.toDataURL('image/png');
-            const link = document.createElement('a');
-            link.href = pngUrl;
-            link.download = 'organization-qr.png';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        };
-        img.src = 'data:image/svg+xml;base64,' + window.btoa(unescape(encodeURIComponent(svgString)));
+    // Handle organization logo change and upload in one step
+    const handleOrgLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !userEmail) return;
+
+        // Validate file
+        if (file.size > MAX_COVER_IMAGE_SIZE) {
+            alert('File size too large. Please select a file smaller than 500MB.');
+            return;
+        }
+
+        try {
+            // Compress and upload the image
+            const compressedBlob = await compressImage(file);
+            const compressedFile = new File([compressedBlob], file.name, {
+                type: file.type
+            });
+
+            // Upload to S3
+            const s3Key = `users/${userEmail}/logo/${Date.now()}-${compressedFile.name}`;
+            const logoUrl = await uploadFileToS3(compressedFile, s3Key);
+
+            // Update user profile in DynamoDB
+            const userData = await getUserByEmail(userEmail);
+            if (userData) {
+                await storeUserCredentials({
+                    userId: userData.userId || userEmail,
+                    email: userData.email || userEmail,
+                    name: userData.name || '',
+                    mobile: userData.mobile || '',
+                    role: userData.role || 'organizer',
+                    organizationName: userData.organizationName || '',
+                    organizationCode: userData.organizationCode || '',
+                    organizationLogo: logoUrl,
+                    ...(userData.createdEvents ? { createdEvents: userData.createdEvents } : {})
+                });
+
+                // Update local state
+                setUserProfile((prev: any) => ({
+                    ...prev,
+                    organizationLogo: logoUrl
+                }));
+
+                // Success - logo updated
+            }
+        } catch (error) {
+            console.error('Error uploading organization logo:', error);
+            // Handle error state
+            alert('Failed to upload organization logo. Please try again.');
+        } finally {
+            // Reset file input to allow selecting the same file again
+            e.target.value = '';
+            setIsUploadingOrgLogo(false);
+        }
+    };
+
+    // Handle logo click to open file dialog
+    const handleLogoClick = () => {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.onchange = (e: any) => handleOrgLogoChange(e);
+        fileInput.click();
+    };
+
+    // Organization name editing functions
+    const handleOrgNameEdit = () => {
+        setIsEditingOrgName(true);
+        setEditedOrgName(userProfile?.organizationName || '');
+    };
+
+    const handleOrgNameUpdate = async () => {
+        if (!editedOrgName.trim() || !userEmail || !userProfile?.organizationCode) return;
+
+        setIsUpdatingOrgName(true);
+        try {
+            // Update user profile in DynamoDB
+            const userData = await getUserByEmail(userEmail);
+            if (userData) {
+                await storeUserCredentials({
+                    userId: userEmail,
+                    email: userEmail,
+                    name: userData.name || '',
+                    mobile: userData.mobile || '',
+                    role: userData.role || 'organizer',
+                    organizationName: editedOrgName.trim(),
+                    organizationCode: userData.organizationCode,
+                    organizationLogo: userData.organizationLogo
+                });
+
+                // Update organization name across all events
+                await updateOrganizationNameAcrossEvents(userProfile.organizationCode, editedOrgName.trim());
+
+                // Update local state
+                setUserProfile((prev: any) => ({
+                    ...prev,
+                    organizationName: editedOrgName.trim()
+                }));
+
+                // Clear edit state
+                setIsEditingOrgName(false);
+                setEditedOrgName('');
+            }
+        } catch (error) {
+            console.error('Error updating organization name:', error);
+            alert('Failed to update organization name. Please try again.');
+        } finally {
+            setIsUpdatingOrgName(false);
+        }
+    };
+
+    const cancelOrgNameEdit = () => {
+        setIsEditingOrgName(false);
+        setEditedOrgName('');
     };
 
     return (
@@ -982,31 +1119,109 @@ const EventDashboard = (props: EventDashboardProps) => {
                     {userProfile?.organizationName && (
                         <div className="w-full sm:w-1/3">
                             <div className="h-full p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg shadow-md flex items-center">
-                                {userProfile?.organizationLogo && (
-                                    <div className="relative h-12 w-12 rounded-full overflow-hidden border-2 border-blue-200 shadow-md flex-shrink-0">
-                                        <img 
-                                            src={userProfile.organizationLogo} 
-                                            alt="Organization Logo" 
-                                            className="h-full w-full object-cover"
-                                        />
+                                <div className="relative flex-shrink-0">
+                                    <div 
+                                        className={`relative h-12 w-12 rounded-full overflow-hidden border-2 ${isUploadingOrgLogo ? 'border-blue-400' : 'border-blue-200'} shadow-md group cursor-pointer transition-all duration-200 hover:border-blue-400`}
+                                        onClick={!isUploadingOrgLogo ? handleLogoClick : undefined}
+                                        title={isUploadingOrgLogo ? 'Uploading...' : 'Change organization logo'}
+                                    >
+                                        {isUploadingOrgLogo ? (
+                                            <div className="h-full w-full bg-blue-50 flex items-center justify-center">
+                                                <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
+                                            </div>
+                                        ) : userProfile?.organizationLogo ? (
+                                            <img 
+                                                src={userProfile.organizationLogo} 
+                                                alt="Organization Logo" 
+                                                className="h-full w-full object-cover group-hover:opacity-90 transition-opacity"
+                                            />
+                                        ) : (
+                                            <div className="h-full w-full bg-blue-100 flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                                                <Camera className="w-5 h-5 text-blue-500" />
+                                            </div>
+                                        )}
+                                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100">
+                                            <Camera className="w-4 h-4 text-white" />
+                                        </div>
                                     </div>
-                                )}
-                                <div className="ml-3 overflow-hidden">
-                                    <span className="text-xs text-gray-600 font-medium truncate">Organization</span>
-                                    <h2 className="text-sm font-semibold text-blue-900 truncate">
-                                        {userProfile.organizationName}
-                                    </h2>
+                                    <input
+                                        type="file"
+                                        className="hidden"
+                                        accept="image/*"
+                                        onChange={handleOrgLogoChange}
+                                        disabled={isUploadingOrgLogo}
+                                        id="org-logo-upload"
+                                    />
                                 </div>
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setShowQRCode(true);
-                                    }}
-                                    className="ml-auto p-2 text-blue-600 hover:bg-blue-100 rounded-full transition-colors"
-                                    title="Show QR Code"
-                                >
-                                    <QrCode className="w-4 h-4" />
-                                </button>
+                                <div className="ml-3 overflow-hidden flex-1">
+                                    <span className="text-xs text-gray-600 font-medium truncate">Organization</span>
+                                    {isEditingOrgName ? (
+                                        <div className="flex items-center gap-2 w-full">
+                                            <input
+                                                type="text"
+                                                value={editedOrgName}
+                                                onChange={(e) => setEditedOrgName(e.target.value)}
+                                                className="text-sm font-semibold text-blue-900 bg-white border border-blue-300 rounded px-2 py-1 focus:outline-none focus:border-blue-500 flex-1"
+                                                autoFocus
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        handleOrgNameUpdate();
+                                                    } else if (e.key === 'Escape') {
+                                                        cancelOrgNameEdit();
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center justify-between">
+                                            <h2 className="text-sm font-semibold text-blue-900 truncate">
+                                                {userProfile.organizationName}
+                                            </h2>
+                                            <button
+                                                onClick={handleOrgNameEdit}
+                                                className="p-1 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50 ml-1"
+                                                title="Edit organization name"
+                                            >
+                                                <Edit className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                                {isEditingOrgName ? (
+                                    <div className="ml-2 flex items-center gap-1">
+                                        <button
+                                            onClick={handleOrgNameUpdate}
+                                            disabled={!editedOrgName.trim() || isUpdatingOrgName}
+                                            className="p-1.5 bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Save Name"
+                                        >
+                                            {isUpdatingOrgName ? (
+                                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                            ) : (
+                                                <CheckCircle className="w-3 h-3" />
+                                            )}
+                                        </button>
+                                        <button
+                                            onClick={cancelOrgNameEdit}
+                                            disabled={isUpdatingOrgName}
+                                            className="p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Cancel"
+                                        >
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowQRCode(true);
+                                        }}
+                                        className="ml-auto p-2 text-blue-600 hover:bg-blue-100 rounded-full transition-colors"
+                                        title="Show QR Code"
+                                    >
+                                        <QrCode className="w-4 h-4" />
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -1219,19 +1434,49 @@ const EventDashboard = (props: EventDashboardProps) => {
                     <div className="mt-4 sm:mt-6">
                         <div className="flex flex-row justify-between items-center mb-3 sm:mb-4">
                             <h2 className="text-xl font-bold text-blue-900">All Events</h2>
-                            <div className="w-40">
-                                <select
-                                    className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                                    value={sortOption}
-                                    onChange={(e) => setSortOption(e.target.value as 'name' | 'date')}
-                                >
-                                    <option value="date">Sort by Date</option>
-                                    <option value="name">Sort by Name (A-Z)</option>
-                                </select>
+                            <div className="hidden sm:flex items-center gap-3">
+                                {/* Search Input */}
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <Search className="h-4 w-4 text-gray-400" />
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Search events..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="w-48 pl-10 pr-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                </div>
+                                <div className="w-40">
+                                    <select
+                                        className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                        value={sortOption}
+                                        onChange={(e) => setSortOption(e.target.value as 'name' | 'date')}
+                                    >
+                                        <option value="date">Sort by Date</option>
+                                        <option value="name">Sort by Name (A-Z)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        {/* Mobile Search Input */}
+                        <div className="sm:hidden mb-4">
+                            <div className="relative">
+                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <Search className="h-4 w-4 text-gray-400" />
+                                </div>
+                                <input
+                                    type="text"
+                                    placeholder="Search events..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full pl-10 pr-3 py-2 text-sm border border-gray-300 rounded-md bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                />
                             </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                            {Array.isArray(events) && sortedEvents.map((event) => (
+                            {Array.isArray(events) && filteredEvents.map((event) => (
                                 <div key={event.id} className="bg-gradient-to-br from-white to-blue-50 rounded-lg shadow-md border border-blue-200 overflow-hidden transform hover:scale-102 hover:shadow-lg transition-all duration-200">
                                     {event.coverImage ? (
                                         <div className="relative w-full h-32 sm:h-40 overflow-hidden">

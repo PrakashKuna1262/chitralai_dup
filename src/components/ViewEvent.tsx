@@ -4,7 +4,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, Trash2 } from 'lucide-react';
+import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
 import { Link, useNavigate } from 'react-router-dom';
@@ -30,13 +30,6 @@ interface FaceRecordWithImage {
 
 interface FaceGroups {
   [groupId: string]: FaceRecordWithImage[];
-}
-
-interface ShareData {
-  title?: string;
-  text?: string;
-  url?: string;
-  files?: File[];
 }
 
 /**
@@ -126,12 +119,12 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
   const [isEventCreator, setIsEventCreator] = useState(false);
   const [anyoneCanUpload, setAnyoneCanUpload] = useState(false);
   const [eventName, setEventName] = useState<string>('');
-  const [deleteMode, setDeleteMode] = useState(false);
-  const [shareMode, setShareMode] = useState(false);
-  const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set());
-  const [selectedForShare, setSelectedForShare] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [sharing, setSharing] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const qrCodeRef = useRef<SVGSVGElement>(null);
 
@@ -346,228 +339,63 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     }
   };
 
-  // Handler for toggling selection for delete
-  const toggleSelectImage = (key: string, mode: 'delete' | 'share' = 'delete') => {
-    if (mode === 'delete') {
-      setSelectedForDelete(prev => {
-        const newSet = new Set(prev);
-        if (newSet.has(key)) {
-          newSet.delete(key);
-        } else {
-          newSet.add(key);
-        }
-        return newSet;
-      });
+  // Handler for toggling selection of an image
+  const toggleSelectImage = (key: string) => {
+    setSelectedImages(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(key)) {
+        newSet.delete(key);
+      } else {
+        newSet.add(key);
+      }
+      return newSet;
+    });
+  };
+
+  // Handler for Select All
+  const handleSelectAll = () => {
+    if (selectedImages.size === images.length) {
+      setSelectedImages(new Set());
     } else {
-      setSelectedForShare(prev => {
-        const newSet = new Set(prev);
-        if (newSet.has(key)) {
-          newSet.delete(key);
-        } else {
-          newSet.add(key);
-        }
-        return newSet;
-      });
+      setSelectedImages(new Set(images.map(img => img.key)));
     }
+  };
+
+  // Handler for Cancel selection mode
+  const handleCancelSelection = () => {
+    setSelectionMode(false);
+    setSelectedImages(new Set());
   };
 
   // Handler for deleting selected images
   const handleDeleteSelected = async () => {
-    if (selectedForDelete.size === 0) return;
-    if (!window.confirm('Delete selected images? This cannot be undone.')) return;
     setDeleting(true);
+    setDeleteError(null);
     try {
       const { bucketName } = await validateEnvVariables();
-      const s3Client = await s3ClientPromise;
-      for (const key of selectedForDelete) {
-        const deleteCommand = new DeleteObjectCommand({ Bucket: bucketName, Key: key });
-        await s3Client.send(deleteCommand);
-      }
-      // Update event's photoCount in DynamoDB
-      const userEmail = localStorage.getItem('userEmail');
-      if (userEmail) {
-        const currentEvent = await getEventById(eventId);
-        if (currentEvent) {
-          await updateEventData(eventId, userEmail, {
-            photoCount: Math.max(0, (currentEvent.photoCount || 0) - selectedForDelete.size)
-          });
-        }
-      }
-      setImages(prev => prev.filter(img => !selectedForDelete.has(img.key)));
-      setSelectedForDelete(new Set());
-      setDeleteMode(false);
-    } catch (err) {
-      alert('Failed to delete images. Please try again.');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Function to get shareable links for images
-  const getShareableLinks = async (selectedKeys: Set<string>): Promise<string[]> => {
-    const { bucketName } = await validateEnvVariables();
-    const s3Client = await s3ClientPromise;
-    
-    const links = await Promise.all(
-      Array.from(selectedKeys).map(async (key) => {
+      const keysToDelete = images.filter(img => selectedImages.has(img.key)).map(img => img.key);
+      for (const key of keysToDelete) {
         try {
-          const command = new GetObjectCommand({
+          const deleteCommand = new DeleteObjectCommand({
             Bucket: bucketName,
             Key: key,
-            ResponseContentDisposition: 'inline' // This makes the browser display the image instead of downloading
           });
-          
-          // Generate a presigned URL that's valid for 1 hour
-          return await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-        } catch (error) {
-          console.error('Error generating shareable link:', error);
-          return null;
-        }
-      })
-    );
-    
-    return links.filter((link): link is string => link !== null);
-  };
-
-  // Handler for sharing selected images
-  const handleShareSelected = async () => {
-    if (selectedForShare.size === 0) return;
-    
-    setSharing(true);
-    
-    try {
-      // Get the selected images to share as actual files
-      const selectedImages = images.filter(img => selectedForShare.has(img.key));
-      
-      // Convert images to File objects for sharing
-      const imageFiles: File[] = [];
-      const shareableLinks: string[] = [];
-      
-      for (const image of selectedImages) {
-        try {
-          // Fetch the image as a blob
-          const response = await fetch(image.url, {
-            mode: 'cors',
-            headers: { 'Cache-Control': 'no-cache' }
-          });
-          
-          if (!response.ok) {
-            console.error('Failed to fetch image:', image.url);
-            continue;
-          }
-          
-          const blob = await response.blob();
-          
-          // Extract filename from the image key
-          const filename = image.key.split('/').pop() || `photo-${Date.now()}.jpg`;
-          const cleanFilename = filename.replace(/^\d+-/, ''); // Remove timestamp prefix if present
-          
-          // Create a File object from the blob
-          const file = new File([blob], cleanFilename, { type: blob.type });
-          imageFiles.push(file);
-          
-          // Also keep the URL as fallback
-          shareableLinks.push(image.url);
-        } catch (error) {
-          console.error('Error processing image:', image.url, error);
-          // Add the direct URL as fallback
-          shareableLinks.push(image.url);
-        }
-      }
-      
-      // Try Web Share API first with actual files (for mobile devices)
-      if (navigator.share && navigator.canShare) {
-        try {
-          const shareData: ShareData = {
-            title: `Photos from ${eventName}`,
-            text: `Check out these ${imageFiles.length} photos from ${eventName}!`,
-          };
-          
-          // Only add files if we have them and the browser supports file sharing
-          if (imageFiles.length > 0 && navigator.canShare({ files: imageFiles })) {
-            shareData.files = imageFiles;
-          }
-          
-          await navigator.share(shareData);
-          setSelectedForShare(new Set());
-          setShareMode(false);
+          await (await s3ClientPromise).send(deleteCommand);
+        } catch (err) {
+          setDeleteError('Failed to delete one or more images.');
+          setDeleting(false);
           return;
-        } catch (err: unknown) {
-          if (err instanceof Error && err.name !== 'AbortError') {
-            console.error('Error sharing with Web Share API:', err);
-            // Continue to fallback methods if Web Share API fails
-          } else {
-            // User cancelled the share
-            setSharing(false);
-            return;
-          }
         }
       }
-      
-      // Fallback 1: Create a downloadable zip file with all images
-      if (imageFiles.length > 0) {
-        try {
-          // For multiple images, create a zip file
-          if (imageFiles.length > 1) {
-            // We'll need to import JSZip for this, but for now let's use individual downloads
-            alert(`Preparing ${imageFiles.length} images for download. They will download individually.`);
-            
-            // Download each image individually
-            imageFiles.forEach((file, index) => {
-              setTimeout(() => {
-                const url = URL.createObjectURL(file);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = file.name;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-              }, index * 500); // Stagger downloads to avoid browser blocking
-            });
-          } else {
-            // Single image - direct download
-            const file = imageFiles[0];
-            const url = URL.createObjectURL(file);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = file.name;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-          }
-          
-          setSelectedForShare(new Set());
-          setShareMode(false);
-          return;
-        } catch (downloadErr) {
-          console.error('Failed to download images:', downloadErr);
-        }
-      }
-      
-      // Fallback 2: Copy image URLs to clipboard
-      try {
-        const shareText = `Check out these photos from ${eventName}:\n\n${shareableLinks.join('\n\n')}`;
-        await navigator.clipboard.writeText(shareText);
-        alert('Image links have been copied to your clipboard!');
-        setSelectedForShare(new Set());
-        setShareMode(false);
-        return;
-      } catch (clipboardErr) {
-        console.error('Failed to copy to clipboard:', clipboardErr);
-      }
-      
-      // Fallback 3: Open mail client with image URLs
-      const subject = encodeURIComponent(`Photos from ${eventName}`);
-      const body = encodeURIComponent(`Check out these photos from ${eventName}:\n\n${shareableLinks.join('\n\n')}`);
-      window.open(`mailto:?subject=${subject}&body=${body}`);
-      
-    } catch (err) {
-      console.error('Error sharing images:', err);
-      alert('Failed to share images. Please try again or download them individually.');
-    } finally {
-      setSharing(false);
+      // Remove deleted images from UI
+      setImages(prev => prev.filter(img => !selectedImages.has(img.key)));
+      setSelectedImages(new Set());
+      setSelectionMode(false);
+      setShowDeleteModal(false);
+      setDeleting(false);
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete images.');
+      setDeleting(false);
     }
   };
 
@@ -629,6 +457,8 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
           </div>
           <h1 className="text-3xl font-bold text-gray-900">{eventName}</h1>
         </div>
+
+        
 
         {/* QR Code Modal */}
         {showQRModal && (
@@ -735,123 +565,63 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
             </p>
           </div>
         )}
-
-        <div className="space-y-8">
-          <div className="flex items-center justify-between mb-4 relative">
-            <h2 className="text-2xl font-bold text-gray-900-mt-1">Event Photos</h2>
-            <div className="absolute right-0 top-1 flex gap-2">
-              {/* Share button */}
-              {!deleteMode && !shareMode && (
-                <button
-                  className="p-2 rounded-full bg-blue-100 hover:bg-blue-200 text-blue-600 shadow transition"
-                  title="Share images"
-                  onClick={() => setShareMode(true)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
-                    <polyline points="16 6 12 2 8 6"></polyline>
-                    <line x1="12" y1="2" x2="12" y2="15"></line>
-                  </svg>
-                </button>
-              )}
-              {/* Trash button */}
-              {!deleteMode && !shareMode && (
-                <button
-                  className="p-2 rounded-full bg-red-100 hover:bg-red-200 text-red-600 shadow transition"
-                  title="Delete images"
-                  onClick={() => setDeleteMode(true)}
-                >
-                  <Trash2 size={22} />
-                </button>
-              )}
-            </div>
+         {/* Selection mode controls */}
+        <div className="flex items-center justify-between mb-4 relative">
+          <h2 className="text-2xl font-bold text-gray-900 mt-1">Event Photos</h2>
+          {!selectionMode && (
+            <button
+              className="bg-blue-200 text-black px-4 py-2 rounded hover:bg-blue-300 transition"
+              onClick={() => setSelectionMode(true)}
+            >
+              Select
+            </button>
+          )}
+        </div>
+        {selectionMode && (
+          <div className="flex items-center gap-3 mb-4 justify-end">
+            <label className="flex items-center gap-2 mr-auto select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedImages.size === images.length && images.length > 0}
+                ref={el => {
+                  if (el) {
+                    el.indeterminate = selectedImages.size > 0 && selectedImages.size < images.length;
+                  }
+                }}
+                onChange={handleSelectAll}
+              />
+              <span className="text-gray-700 text-sm">Select All</span>
+            </label>
+            <button
+              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50 transition"
+              disabled={selectedImages.size === 0}
+              onClick={() => setShowShareModal(true)}
+            >
+              Share
+            </button>
+            <button
+              className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 disabled:opacity-50 transition"
+              disabled={selectedImages.size === 0}
+              onClick={() => setShowDeleteModal(true)}
+            >
+              Delete
+            </button>
+            <button
+              className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 transition"
+              onClick={handleCancelSelection}
+            >
+              Cancel
+            </button>
           </div>
-          {/* Share mode controls */}
-          {shareMode && (
-            <div className="flex items-center gap-3 mb-2 justify-end">
-              {/* Select All checkbox */}
-              <label className="flex items-center gap-2 mr-auto select-none cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedForShare.size === images.length && images.length > 0}
-                  ref={el => {
-                    if (el) {
-                      el.indeterminate = selectedForShare.size > 0 && selectedForShare.size < images.length;
-                    }
-                  }}
-                  onChange={e => {
-                    if (e.target.checked) {
-                      setSelectedForShare(new Set(images.map(img => img.key)));
-                    } else {
-                      setSelectedForShare(new Set());
-                    }
-                  }}
-                />
-                <span className="text-gray-700 text-sm">Select All</span>
-              </label>
-              <button
-                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
-                onClick={handleShareSelected}
-                disabled={sharing || selectedForShare.size === 0}
-              >
-                {sharing ? 'Sharing...' : `Share Selected (${selectedForShare.size})`}
-              </button>
-              <button
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-                onClick={() => { setShareMode(false); setSelectedForShare(new Set()); }}
-                disabled={sharing}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {/* Delete mode controls */}
-          {deleteMode && (
-            <div className="flex items-center gap-3 mb-2 justify-end">
-              {/* Select All checkbox */}
-              <label className="flex items-center gap-2 mr-auto select-none cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedForDelete.size === images.length && images.length > 0}
-                  ref={el => {
-                    if (el) {
-                      el.indeterminate = selectedForDelete.size > 0 && selectedForDelete.size < images.length;
-                    }
-                  }}
-                  onChange={e => {
-                    if (e.target.checked) {
-                      setSelectedForDelete(new Set(images.map(img => img.key)));
-                    } else {
-                      setSelectedForDelete(new Set());
-                    }
-                  }}
-                />
-                <span className="text-gray-700 text-sm">Select All</span>
-              </label>
-              <button
-                className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 disabled:opacity-50"
-                onClick={handleDeleteSelected}
-                disabled={deleting || selectedForDelete.size === 0}
-              >
-                {deleting ? 'Deleting...' : `Delete Selected (${selectedForDelete.size})`}
-              </button>
-              <button
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-                onClick={() => { setDeleteMode(false); setSelectedForDelete(new Set()); }}
-                disabled={deleting}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
+        )}
+        <div className="space-y-8">
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-4 p-4">
             {images.map((image, idx) => (
               <div
                 key={image.key}
                 className="relative aspect-square overflow-hidden rounded-xl shadow-md cursor-pointer group"
                 onClick={() => {
-                  if (deleteMode) {
+                  if (selectionMode) {
                     toggleSelectImage(image.key);
                     return;
                   }
@@ -859,13 +629,13 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                   toggleHeaderFooter(false);
                 }}
               >
-                {/* Checkbox overlay in delete/share mode */}
-                {(deleteMode || shareMode) && (
+                {/* Checkbox overlay in selection mode */}
+                {selectionMode && (
                   <input
                     type="checkbox"
-                    checked={deleteMode ? selectedForDelete.has(image.key) : selectedForShare.has(image.key)}
-                    onChange={() => toggleSelectImage(image.key, deleteMode ? 'delete' : 'share')}
-                    className={`absolute top-2 left-2 z-20 w-5 h-5 ${deleteMode ? 'accent-red-500 border-red-400 focus:ring-red-300' : 'accent-blue-500 border-blue-400 focus:ring-blue-300'} bg-white border-2 rounded focus:ring-2`}
+                    checked={selectedImages.has(image.key)}
+                    onChange={() => toggleSelectImage(image.key)}
+                    className="absolute top-2 left-2 z-20 w-5 h-5 accent-blue-500 border-blue-400 focus:ring-blue-300 bg-white border-2 rounded focus:ring-2"
                     onClick={e => e.stopPropagation()}
                   />
                 )}
@@ -875,21 +645,20 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                   className="w-full h-full object-cover"
                   loading="lazy"
                 />
-                {!deleteMode && !shareMode && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDownload(image.url);
-                    }}
-                    className="absolute top-2 right-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors duration-200"
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
-                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDownload(image.url);
+                  }}
+                  className="absolute top-2 right-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors duration-200"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
               </div>
             ))}
           </div>
         </div>
+        
 
         {images.length === 0 && (
           <div className="text-center py-16 bg-gray-50 rounded-lg">
@@ -1016,6 +785,143 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                     ))}
                   </ul>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Share Modal */}
+        {showShareModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowShareModal(false)}>
+            <div className="relative bg-white rounded-lg shadow-xl p-8 max-w-md w-full mx-auto" onClick={e => e.stopPropagation()}>
+              <button
+                className="absolute top-4 right-4 p-2 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors duration-200"
+                onClick={() => setShowShareModal(false)}
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <h3 className="text-xl font-semibold text-gray-900 mb-4">Share Selected Images</h3>
+              <p className="mb-4 text-gray-700">You have selected {selectedImages.size} image(s).</p>
+              {/* Share links and copy button will go here */}
+              <div className="flex flex-col gap-2 mb-4 max-h-40 overflow-y-auto">
+                {images.filter(img => selectedImages.has(img.key)).map(img => (
+                  <div key={img.key} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={img.url}
+                      className="flex-1 px-2 py-1 border rounded text-xs bg-gray-100"
+                    />
+                    <button
+                      className="text-blue-500 hover:text-blue-700 text-xs"
+                      onClick={() => navigator.clipboard.writeText(img.url)}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600 transition mb-4"
+                onClick={() => {
+                  const urls = images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n');
+                  navigator.clipboard.writeText(urls);
+                }}
+              >
+                Copy All Links
+              </button>
+              <div className="my-2 text-center text-gray-500 text-sm">Or share via:</div>
+              <div className="flex gap-3 justify-center mb-2">
+                {/* WhatsApp */}
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n'))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-green-500 hover:bg-green-600 text-white rounded-full p-2 flex items-center justify-center"
+                  title="Share on WhatsApp"
+                >
+                  <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.472-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.149-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.151-.174.2-.298.3-.497.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.5-.669-.51-.173-.008-.372-.01-.571-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.095 3.2 5.076 4.363.709.306 1.262.489 1.694.626.712.227 1.36.195 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.288.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.617h-.001a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.999-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.455 4.436-9.89 9.893-9.89 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.896 6.994c-.003 5.455-4.438 9.89-9.893 9.89m8.413-18.304A11.815 11.815 0 0 0 12.05 0C5.495 0 .06 5.435.058 12.09c0 2.13.557 4.21 1.615 6.033L.057 24l6.063-1.616A11.888 11.888 0 0 0 12.051 24c6.555 0 11.89-5.435 11.893-12.09a11.86 11.86 0 0 0-3.489-8.715"/></svg>
+                </a>
+                {/* Facebook */}
+                <a
+                  href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(Array.from(selectedImages).length === 1 ? images.find(img => selectedImages.has(img.key))?.url || window.location.href : window.location.href)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-2 flex items-center justify-center"
+                  title="Share on Facebook"
+                >
+                  <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M22.675 0h-21.35C.595 0 0 .592 0 1.326v21.348C0 23.408.595 24 1.325 24H12.82v-9.294H9.692v-3.622h3.127V8.413c0-3.1 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.797.143v3.24l-1.918.001c-1.504 0-1.797.715-1.797 1.763v2.313h3.587l-.467 3.622h-3.12V24h6.116c.73 0 1.324-.592 1.324-1.326V1.326C24 .592 23.405 0 22.675 0"/></svg>
+                </a>
+                {/* Twitter/X */}
+                <a
+                  href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n'))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-blue-400 hover:bg-blue-500 text-white rounded-full p-2 flex items-center justify-center"
+                  title="Share on Twitter"
+                >
+                  <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M24 4.557a9.83 9.83 0 0 1-2.828.775 4.932 4.932 0 0 0 2.165-2.724c-.951.564-2.005.974-3.127 1.195a4.916 4.916 0 0 0-8.38 4.482C7.691 8.095 4.066 6.13 1.64 3.161c-.542.929-.856 2.01-.857 3.17 0 2.188 1.115 4.116 2.823 5.247a4.904 4.904 0 0 1-2.229-.616c-.054 2.281 1.581 4.415 3.949 4.89a4.936 4.936 0 0 1-2.224.084c.627 1.956 2.444 3.377 4.6 3.417A9.867 9.867 0 0 1 0 21.543a13.94 13.94 0 0 0 7.548 2.212c9.057 0 14.009-7.496 14.009-13.986 0-.21 0-.423-.016-.634A9.936 9.936 0 0 0 24 4.557z"/></svg>
+                </a>
+                {/* Web Share API */}
+                {navigator.share && (
+                  <button
+                    className="bg-gray-700 hover:bg-gray-800 text-white rounded-full p-2 flex items-center justify-center"
+                    title="Share via..."
+                    onClick={async () => {
+                      const urls = images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n');
+                      try {
+                        await navigator.share({
+                          title: 'Event Photos',
+                          text: `Check out these event photos!`,
+                          url: urls
+                        });
+                      } catch (e) {
+                        // User cancelled or not supported
+                      }
+                    }}
+                  >
+                    <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77l-7.13-4.13c.05-.25.09-.5.09-.77s-.03-.52-.09-.77l7.09-4.11c.54.5 1.25.81 2.01.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .27.04.52.09.77l-7.09 4.11c-.54-.5-1.25-.81-2.01-.81-1.66 0-3 1.34-3 3s1.34 3 3 3c.76 0 1.47-.31 2-.8l7.13 4.13c-.05.23-.08.47-.08.72 0 1.52 1.23 2.75 2.75 2.75s2.75-1.23 2.75-2.75-1.23-2.75-2.75-2.75z"/></svg>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Delete Modal */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => !deleting && setShowDeleteModal(false)}>
+            <div className="relative bg-white rounded-lg shadow-xl p-8 max-w-md w-full mx-auto" onClick={e => e.stopPropagation()}>
+              <button
+                className="absolute top-4 right-4 p-2 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors duration-200"
+                onClick={() => !deleting && setShowDeleteModal(false)}
+                disabled={deleting}
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <h3 className="text-xl font-semibold text-gray-900 mb-4">Delete Selected Images</h3>
+              <p className="mb-6 text-gray-700">Are you sure you want to delete {selectedImages.size} image(s)? This action cannot be undone.</p>
+              {deleteError && <div className="mb-4 text-red-500 text-sm">{deleteError}</div>}
+              {deleting && (
+                <div className="flex items-center justify-center mb-4">
+                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-red-500"></div>
+                  <span className="ml-3 text-gray-700">Deleting...</span>
+                </div>
+              )}
+              <div className="flex gap-4 justify-end">
+                <button
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 transition"
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={deleting}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition disabled:opacity-50"
+                  onClick={handleDeleteSelected}
+                  disabled={deleting}
+                >
+                  Delete
+                </button>
               </div>
             </div>
           </div>
