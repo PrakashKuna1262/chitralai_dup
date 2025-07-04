@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
-import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, ShieldAlert } from 'lucide-react';
+import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, ShieldAlert, Clock } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getUserEvents, getEventById, updateEventData, convertToAppropriateUnit, addSizes, formatSize } from '../config/eventStorage';
@@ -45,7 +45,7 @@ interface FileProgress {
 }
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB
-const BATCH_SIZE = 10; // Increased for faster processing
+const BATCH_SIZE = 5; // Process 5 images at a time
 const IMAGES_PER_PAGE = 20;
 const MAX_PARALLEL_UPLOADS = 20; // Increased for faster parallel processing
 const MAX_DIMENSION = 2048;
@@ -179,6 +179,28 @@ const formatUploadSpeed = (bytesPerSecond: number): string => {
   }
 };
 
+// Add new interface for dual progress tracking
+interface DualProgress {
+  optimization: {
+    current: number;
+    total: number;
+    processedBytes: number;
+    totalBytes: number;
+    estimatedTimeRemaining?: number;
+  };
+  upload: {
+    current: number;
+    total: number;
+    processedBytes: number;
+    totalBytes: number;
+    uploadSpeed?: number;
+    estimatedTimeRemaining?: number;
+    currentFile?: string;
+  };
+  currentStage: 'optimization' | 'upload';
+  overallEstimatedTime?: number;
+}
+
 const UploadImage = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -202,6 +224,7 @@ const UploadImage = () => {
   const [totalSize, setTotalSize] = useState<number>(0);
   const [uploadType, setUploadType] = useState<'folder' | 'photos'>('photos');
   const [isDragging, setIsDragging] = useState(false);
+  const [dualProgress, setDualProgress] = useState<DualProgress | null>(null);
 
   // Handle drag events
   const handleDragEnter = (e: React.DragEvent) => {
@@ -384,6 +407,25 @@ const UploadImage = () => {
       if (urlEventId) {
         console.log('EventId from URL params:', urlEventId);
         setEventCode(urlEventId);
+        // Get event details to verify it exists and set the name
+        try {
+          const event = await getEventById(urlEventId);
+          if (event) {
+            // Add the event to the events list if it's not already there
+            setEvents(prevEvents => {
+              const eventExists = prevEvents.some(e => e.id === urlEventId);
+              if (!eventExists) {
+                return [...prevEvents, { id: urlEventId, name: event.name }];
+              }
+              return prevEvents;
+            });
+            setSelectedEvent(urlEventId);
+            setEventId(urlEventId);
+            localStorage.setItem('currentEventId', urlEventId);
+          }
+        } catch (error) {
+          console.error('Error fetching event details:', error);
+        }
         // Only check authorization if user is logged in
         const userEmail = localStorage.getItem('userEmail');
         if (userEmail) {
@@ -402,7 +444,16 @@ const UploadImage = () => {
           id: event.id,
           name: event.name,
         }));
-        setEvents(eventsList);
+        
+        // Merge with any event from URL that might not be in the user's list
+        setEvents(prevEvents => {
+          const combinedEvents = [...eventsList];
+          const urlEvent = prevEvents.find(e => e.id === urlEventId);
+          if (urlEvent && !eventsList.some(e => e.id === urlEventId)) {
+            combinedEvents.push(urlEvent);
+          }
+          return combinedEvents;
+        });
 
         // Extract eventId from state or localStorage if not already set from URL
         let targetEventId = urlEventId;
@@ -857,7 +908,24 @@ const UploadImage = () => {
     return results;
   };
 
-  // Optimize handleUpload function
+  // Add network speed detection
+  const detectNetworkSpeed = async (): Promise<number> => {
+    try {
+      const startTime = Date.now();
+      const response = await fetch('https://www.google.com/favicon.ico');
+      const blob = await response.blob();
+      const endTime = Date.now();
+      const durationInSeconds = (endTime - startTime) / 1000;
+      const bitsLoaded = blob.size * 8;
+      const speedBps = bitsLoaded / durationInSeconds;
+      return speedBps / 8; // Convert to bytes per second
+    } catch (error) {
+      console.error('Error detecting network speed:', error);
+      return 1000000; // Default to 1MB/s if detection fails
+    }
+  };
+
+  // Modify the handleUpload function's upload progress tracking
   const handleUpload = useCallback(async () => {
     // Clear any lingering justLoggedIn flag to prevent unintended reloads
     sessionStorage.removeItem('justLoggedIn');
@@ -885,22 +953,28 @@ const UploadImage = () => {
       const totalCount = images.length;
       const totalBytes = images.reduce((sum, file) => sum + file.size, 0);
       
-      // Initialize progress with overall tracking
-      const initialProgress = {
-        current: 0,
-        total: totalCount,
-        stage: 'optimizing' as const,
-        processedBytes: 0,
-        totalBytes,
-        startTime: uploadStartTime,
-        uploadSpeed: 0,
-        estimatedTimeRemaining: 0,
-        currentFile: '',
-        optimizationStartTime: Date.now(),
-        processedImages: 0
-      };
+      // Detect network speed for better time estimation
+      const networkSpeed = await detectNetworkSpeed();
       
-      setUploadProgress(initialProgress);
+      // Initialize dual progress with total counts
+      setDualProgress({
+        optimization: {
+          current: 0,
+          total: totalCount,
+          processedBytes: 0,
+          totalBytes,
+          estimatedTimeRemaining: totalBytes / (2 * 1024 * 1024)
+        },
+        upload: {
+          current: 0,
+          total: totalCount,
+          processedBytes: 0,
+          totalBytes,
+          uploadSpeed: networkSpeed,
+          estimatedTimeRemaining: totalBytes / networkSpeed
+        },
+        currentStage: 'optimization'
+      });
 
       // Get existing images from the event to check for duplicates
       const currentEvent = await getEventById(selectedEvent);
@@ -935,9 +1009,12 @@ const UploadImage = () => {
         }
       }
       
-      // Filter out duplicates
+      // Get total number of unique images for progress calculation
       const uniqueImages = images.filter(file => !existingImages.has(file.name));
-      
+      const totalUniqueCount = uniqueImages.length;
+      const totalUniqueBytes = uniqueImages.reduce((sum, file) => sum + file.size, 0);
+
+      // Check for duplicates and alert user
       if (uniqueImages.length === 0) {
         alert('All selected images are duplicates. No new images to upload.');
         setIsUploading(false);
@@ -949,143 +1026,178 @@ const UploadImage = () => {
         alert(`${duplicateCount} duplicate image(s) were skipped. Only ${uniqueImages.length} unique image(s) will be uploaded.`);
       }
 
-      // Calculate total original size of unique images being uploaded in bytes
-      const totalOriginalSizeBytes = uniqueImages.reduce((sum, file) => sum + file.size, 0);
-      
-      try {
-        // Calculate compressed sizes
-        let totalCompressedSizeBytes = 0;
-        const compressedFiles: File[] = [];
-        const optimizationStartTime = Date.now();
-        let totalOptimizationTime = 0;
-        
-        for (let i = 0; i < uniqueImages.length; i++) {
-          const file = uniqueImages[i];
-          const imageStartTime = Date.now();
+      // Process images in batches
+      const batches = [];
+      for (let i = 0; i < uniqueImages.length; i += BATCH_SIZE) {
+        batches.push(uniqueImages.slice(i, i + BATCH_SIZE));
+      }
 
+      let totalProcessedBytes = 0;
+      let totalCompressedBytes = 0;
+      let totalUploadedBytes = 0;
+      let totalUploadedCount = 0;
+      const allUploadedUrls = [];
+
+      // Calculate total compressed size first
+      for (const file of uniqueImages) {
+        try {
+          const compressedBlob = await compressImage(file);
+          totalCompressedBytes += compressedBlob.size;
+          URL.revokeObjectURL(URL.createObjectURL(compressedBlob));
+        } catch (error) {
+          totalCompressedBytes += file.size; // Use original size if compression fails
+        }
+      }
+
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const batchStartIndex = batchIndex * BATCH_SIZE;
+        
+        // 1. Compress batch
+        const compressedFiles = [];
+        for (let i = 0; i < batch.length; i++) {
+          const file = batch[i];
+          const globalIndex = batchStartIndex + i;
+          
           try {
+            const startTime = Date.now();
             const compressedBlob = await compressImage(file);
             const compressedFile = new File([compressedBlob], file.name, { type: file.type });
-            totalCompressedSizeBytes += compressedBlob.size;
             compressedFiles.push(compressedFile);
+            
+            totalProcessedBytes += file.size;
 
-            // Calculate average time per image and estimate remaining time
-            totalOptimizationTime = Date.now() - optimizationStartTime;
-            const averageTimePerImage = totalOptimizationTime / (i + 1);
-            const remainingImages = uniqueImages.length - (i + 1);
-            const estimatedRemainingTime = (averageTimePerImage * remainingImages) / 1000; // Convert to seconds
+            // Update optimization progress based on total unique images
+            const timePerByte = (Date.now() - startTime) / file.size;
+            const remainingBytes = totalUniqueBytes - totalProcessedBytes;
+            const estimatedRemainingTime = timePerByte * remainingBytes / 1000;
 
-            setUploadProgress(prev => ({
+            setDualProgress(prev => ({
               ...prev!,
-              current: i + 1,
-              total: uniqueImages.length,
-              stage: 'optimizing',
-              currentFile: file.name,
-              processedBytes: totalCompressedSizeBytes,
-              totalBytes: totalOriginalSizeBytes,
-              estimatedTimeRemaining: estimatedRemainingTime,
-              processedImages: i + 1
+              optimization: {
+                ...prev!.optimization,
+                current: globalIndex + 1,
+                total: totalUniqueCount,
+                processedBytes: totalProcessedBytes,
+                totalBytes: totalUniqueBytes,
+                estimatedTimeRemaining: estimatedRemainingTime
+              },
+              currentStage: 'optimization'
             }));
 
-            // Force garbage collection of the original blob
             URL.revokeObjectURL(URL.createObjectURL(compressedBlob));
-          } catch (compressionError) {
-            console.error('Error compressing file:', file.name, compressionError);
-            totalCompressedSizeBytes += file.size;
+          } catch (error) {
+            console.error('Error compressing file:', file.name, error);
             compressedFiles.push(file);
+            totalProcessedBytes += file.size;
           }
         }
 
-        // Safely transition to upload stage with new time tracking
-        const uploadStartTime = Date.now();
-        setUploadProgress(prev => ({
+        // 2. Upload batch
+        setDualProgress(prev => ({
           ...prev!,
-          stage: 'uploading',
-          processedBytes: 0,
-          totalBytes: totalCompressedSizeBytes,
-          uploadSpeed: 0,
-          startTime: uploadStartTime,
-          estimatedTimeRemaining: 0,
-          processedImages: 0
+          currentStage: 'upload',
+          upload: {
+            ...prev!.upload,
+            current: totalUploadedCount,
+            total: totalUniqueCount,
+            processedBytes: totalUploadedBytes,
+            totalBytes: totalCompressedBytes // Use total compressed size for all images
+          }
         }));
 
-        // Small delay to ensure state update is complete
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // Upload files to S3
-        const uploadedUrls = await uploadToS3WithRetryQueue(compressedFiles);
+        const batchUploadStartTime = Date.now();
         
-        // Update the photo count and sizes in DynamoDB
-        const userEmail = localStorage.getItem('userEmail');
-        if (userEmail) {
-          const currentEvent = await getEventById(selectedEvent);
-          if (currentEvent) {
-            // Calculate the new total size including the compressed size of new uploads
-            const totalOriginalSize = (currentEvent.totalImageSize || 0) + totalOriginalSizeBytes;
-            const totalCompressedSize = (currentEvent.totalCompressedSize || 0) + totalCompressedSizeBytes;
+        // Upload files one by one to track progress accurately
+        for (const file of compressedFiles) {
+          try {
+            const uploadResult = await uploadToS3WithRetry(file, file.name);
+            allUploadedUrls.push(uploadResult);
             
-            // Convert to appropriate units
-            const originalSize = convertToAppropriateUnit(totalOriginalSize);
-            const compressedSize = convertToAppropriateUnit(totalCompressedSize);
-            
-            await updateEventData(selectedEvent, userEmail, {
-              photoCount: (currentEvent.photoCount || 0) + uploadedUrls.length,
-              totalImageSize: originalSize.size,
-              totalImageSizeUnit: originalSize.unit,
-              totalCompressedSize: compressedSize.size,
-              totalCompressedSizeUnit: compressedSize.unit
-            });
+            totalUploadedBytes += file.size;
+            totalUploadedCount++;
+
+            // Update upload progress after each file using total counts
+            const uploadSpeed = totalUploadedBytes / ((Date.now() - uploadStartTime) / 1000);
+            const remainingUploadBytes = totalCompressedBytes - totalUploadedBytes;
+            const estimatedUploadTime = remainingUploadBytes / uploadSpeed;
+
+            setDualProgress(prev => ({
+              ...prev!,
+              upload: {
+                ...prev!.upload,
+                current: totalUploadedCount,
+                total: totalUniqueCount,
+                processedBytes: totalUploadedBytes,
+                totalBytes: totalCompressedBytes,
+                uploadSpeed,
+                estimatedTimeRemaining: estimatedUploadTime
+              }
+            }));
+          } catch (error) {
+            console.error('Error uploading file:', file.name, error);
           }
         }
-        
-        // Index faces in the uploaded images
+
+        // 3. Index faces for this batch
         try {
-          setUploadProgress(prev => ({
-            ...prev!,
-            status: 'Indexing faces...',
-            currentFile: 'Indexing faces in uploaded images'
-          }));
-          
-          const { indexFacesBatch } = await import('../services/faceRecognition');
-          const imageKeys = uploadedUrls
+          const imageKeys = allUploadedUrls
+            .slice(-compressedFiles.length) // Get keys for current batch
             .filter((url): url is string => !!url)
             .map(url => {
               const urlObj = new URL(url);
-              return decodeURIComponent(urlObj.pathname.substring(1)); // Remove leading '/' and decode
+              return decodeURIComponent(urlObj.pathname.substring(1));
             });
-            
+
           if (imageKeys.length > 0) {
-            await indexFacesBatch(selectedEvent, imageKeys, (completed, total, currentImage) => {
-              setUploadProgress(prev => ({
-                ...prev!,
-                current: completed,
-                total,
-                currentFile: currentImage || 'Indexing faces...',
-                status: `Indexing faces (${completed}/${total})`
-              }));
-            });
+            await indexFacesBatch(selectedEvent, imageKeys);
           }
         } catch (indexError) {
-          console.error('Error during face indexing:', indexError);
-          // Don't fail the upload if indexing fails, just log it
+          console.error('Error during face indexing for batch:', indexError);
         }
-        
-        // Mark upload as complete
-        setUploadSuccess(true);
-        setShowQRModal(true);
-        setImages([]);
-        setTotalSize(0);
 
-      } catch (error) {
-        console.error('Error during compression/upload:', error);
-        throw error;
+        // Clear memory after each batch
+        compressedFiles.length = 0;
+        if (global.gc) {
+          global.gc();
+        }
       }
+
+      // Update the event data in DynamoDB
+      const userEmail = localStorage.getItem('userEmail');
+      if (userEmail) {
+        const updatedEvent = await getEventById(selectedEvent);
+        if (updatedEvent) {
+          const totalOriginalSize = (updatedEvent.totalImageSize || 0) + totalBytes;
+          const totalCompressedSize = (updatedEvent.totalCompressedSize || 0) + totalCompressedBytes;
+          
+          const originalSize = convertToAppropriateUnit(totalOriginalSize);
+          const compressedSize = convertToAppropriateUnit(totalCompressedSize);
+          
+          await updateEventData(selectedEvent, userEmail, {
+            photoCount: (updatedEvent.photoCount || 0) + allUploadedUrls.length,
+            totalImageSize: originalSize.size,
+            totalImageSizeUnit: originalSize.unit,
+            totalCompressedSize: compressedSize.size,
+            totalCompressedSizeUnit: compressedSize.unit
+          });
+        }
+      }
+
+      // Mark upload as complete
+      setUploadSuccess(true);
+      setShowQRModal(true);
+      setImages([]);
+      setTotalSize(0);
+      setUploadedUrls(allUploadedUrls);
+
     } catch (error: unknown) {
       console.error('Error during upload:', error);
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
       alert(`An error occurred during upload: ${errorMessage}`);
     } finally {
       setIsUploading(false);
+      setDualProgress(null);
     }
   }, [images, selectedEvent]);
 
@@ -1460,10 +1572,10 @@ const UploadImage = () => {
                     {isUploading ? (
                       <span className="flex items-center justify-center">
                         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                        {uploadProgress?.stage === 'optimizing' && 'Optimizing'}
-                        {uploadProgress?.stage === 'uploading' && 'Uploading'}
+                        {dualProgress?.currentStage === 'optimization' && 'Optimizing'}
+                        {dualProgress?.currentStage === 'upload' && 'Uploading'}
                         {' '}
-                        {uploadProgress?.current}/{uploadProgress?.total}
+                        {dualProgress?.optimization.current}/{dualProgress?.optimization.total}
                       </span>
                     ) : images.length === 0 ? (
                       'Select images to upload'
@@ -1472,43 +1584,55 @@ const UploadImage = () => {
                     )}
                   </button>
 
-                  {isUploading && uploadProgress && (
-                    <div className="mt-4 space-y-2">
-                      <div className="w-full bg-gray-200 rounded-full h-2.5">
-                        <div 
-                          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
-                          style={{ 
-                            width: `${Math.round((uploadProgress.processedBytes / uploadProgress.totalBytes) * 100)}%` 
-                          }}
-                        ></div>
-                      </div>
-                      <div className="flex flex-col space-y-1 text-sm text-gray-600">
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium">
-                            {uploadProgress.stage === 'optimizing' && `Optimizing images `}
-                            {uploadProgress.stage === 'uploading' && `Uploading to cloud `}
-                          </span>
-                          <span>
-                            {Math.round((uploadProgress.processedBytes / uploadProgress.totalBytes) * 100)}%
-                          </span>
+                  {isUploading && dualProgress && (
+                    <div className="mt-4 space-y-4">
+                      {/* Combined Time Estimate */}
+                      <div className="text-sm text-gray-600 flex justify-between items-center">
+                        <div className="flex items-center">
+                          <Clock className="w-4 h-4 mr-2" />
+                          <span>Estimated time remaining: {formatTimeRemaining(
+                            (dualProgress.optimization.estimatedTimeRemaining || 0) + 
+                            (dualProgress.upload.estimatedTimeRemaining || 0)
+                          )}</span>
                         </div>
-                        {/* Show time remaining for all images */}
-                        {uploadProgress.estimatedTimeRemaining !== undefined && uploadProgress.estimatedTimeRemaining > 0 && (
-                          <div className="flex justify-between items-center text-xs text-gray-500">
-                            <span>
-                              {uploadProgress.stage === 'optimizing' ? 'Optimization time remaining' : 'Upload time remaining'}
-                            </span>
-                            <span>{formatTimeRemaining(uploadProgress.estimatedTimeRemaining)}</span>
-                          </div>
-                        )}
-                        {/* Show upload speed only during upload stage */}
-                        {uploadProgress.stage === 'uploading' && uploadProgress.uploadSpeed !== undefined && uploadProgress.uploadSpeed > 0 && (
-                          <div className="flex justify-between items-center text-xs text-gray-500">
-                            <span>Upload speed</span>
-                            <span>{formatUploadSpeed(uploadProgress.uploadSpeed)}</span>
-                          </div>
+                        {dualProgress.upload.uploadSpeed !== undefined && (
+                          <span className="text-xs">Upload speed: {formatUploadSpeed(dualProgress.upload.uploadSpeed)}</span>
                         )}
                       </div>
+
+                      {/* Optimization Progress */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm text-gray-600">
+                          <span>Optimizing Images</span>
+                          <span>{Math.round((dualProgress.optimization.processedBytes / dualProgress.optimization.totalBytes) * 100)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                          <div 
+                            className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                            style={{ 
+                              width: `${Math.round((dualProgress.optimization.processedBytes / dualProgress.optimization.totalBytes) * 100)}%` 
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Upload Progress */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm text-gray-600">
+                          <span>Uploading to Cloud</span>
+                          <span>{Math.round((dualProgress.upload.processedBytes / dualProgress.upload.totalBytes) * 100)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                          <div 
+                            className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                            style={{ 
+                              width: `${Math.round((dualProgress.upload.processedBytes / dualProgress.upload.totalBytes) * 100)}%` 
+                            }}
+                          />
+                        </div>
+                      </div>
+
+          
                     </div>
                   )}
                 </>
