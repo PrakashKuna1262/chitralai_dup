@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Image as ImageIcon, ArrowLeft, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle } from 'lucide-react';
+import { Image as ImageIcon, ArrowLeft, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { validateEnvVariables } from '../config/aws';
 import ProgressiveImage from './ProgressiveImage';
 
 interface ShareMenuState {
@@ -26,11 +27,24 @@ const MyPhotos: React.FC = () => {
   const [images, setImages] = useState<MatchingImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState<MatchingImage | null>(null);
+  const [bucketName, setBucketName] = useState<string | undefined>();
   const [shareMenu, setShareMenu] = useState<ShareMenuState>({
     isOpen: false,
     imageUrl: '',
     position: { top: 0, left: 0 }
   });
+
+  // Helper function to construct S3 URL
+  const constructS3Url = (imageUrl: string, bucket?: string): string => {
+    // If it's already a full URL, return as is
+    if (imageUrl.startsWith('http')) {
+      return imageUrl;
+    }
+    // Use provided bucket name or fallback to state variable or default
+    const useBucket = bucket || bucketName || 'chitral-ai';
+    // Otherwise construct the URL using the bucket name
+    return `https://${useBucket}.s3.amazonaws.com/${imageUrl}`;
+  };
 
   const handleShare = async (platform: string, imageUrl: string, e?: React.MouseEvent) => {
     if (e) {
@@ -132,6 +146,50 @@ const MyPhotos: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [shareMenu.isOpen]);
 
+  // Navigation functions for enlarged image view
+  const getCurrentImageIndex = () => {
+    if (!selectedImage) return -1;
+    return images.findIndex(img => img.imageUrl === selectedImage.imageUrl);
+  };
+
+  const goToNextImage = () => {
+    const currentIndex = getCurrentImageIndex();
+    if (currentIndex === -1) return;
+    const nextIndex = (currentIndex + 1) % images.length;
+    setSelectedImage(images[nextIndex]);
+  };
+
+  const goToPreviousImage = () => {
+    const currentIndex = getCurrentImageIndex();
+    if (currentIndex === -1) return;
+    const prevIndex = currentIndex === 0 ? images.length - 1 : currentIndex - 1;
+    setSelectedImage(images[prevIndex]);
+  };
+
+  // Keyboard navigation for enlarged image
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!selectedImage) return;
+      
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        goToNextImage();
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        goToPreviousImage();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setSelectedImage(null);
+        toggleHeaderFooter(true);
+      }
+    };
+
+    if (selectedImage) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [selectedImage, images]);
+
   // Toggle header and footer visibility when image is clicked
   const toggleHeaderFooter = (visible: boolean) => {
     // Find header and footer elements in DOM
@@ -165,6 +223,10 @@ const MyPhotos: React.FC = () => {
           return;
         }
 
+        // Get the S3 bucket name
+        const { bucketName } = await validateEnvVariables();
+        setBucketName(bucketName);
+
         // Get all attendee images
         const attendeeImageData = await getAllAttendeeImagesByUser(userEmail);
         
@@ -186,7 +248,7 @@ const MyPhotos: React.FC = () => {
               imageId: imageUrl.split('/').pop() || '',
               eventId: data.eventId,
               eventName: eventName,
-              imageUrl: imageUrl,
+              imageUrl: constructS3Url(imageUrl, bucketName),
               matchedDate: data.uploadedAt
             });
           });
@@ -434,6 +496,8 @@ const MyPhotos: React.FC = () => {
                 className="w-full h-full object-contain rounded-lg"
                 style={{ maxHeight: 'calc(600px - 4rem)' }}
               />
+              
+              {/* Close button */}
               <button
                 className="absolute top-4 right-4 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
                 onClick={() => {
@@ -443,6 +507,43 @@ const MyPhotos: React.FC = () => {
               >
                 <X className="w-8 h-8" />
               </button>
+              
+              {/* Navigation arrows */}
+              {images.length > 1 && (
+                <>
+                  {/* Previous button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goToPreviousImage();
+                    }}
+                    className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    title="Previous image (←)"
+                  >
+                    <ChevronLeft className="w-8 h-8" />
+                  </button>
+                  
+                  {/* Next button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goToNextImage();
+                    }}
+                    className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    title="Next image (→)"
+                  >
+                    <ChevronRight className="w-8 h-8" />
+                  </button>
+                </>
+              )}
+              
+              {/* Image counter */}
+              {images.length > 1 && (
+                <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/20 text-white text-sm">
+                  {getCurrentImageIndex() + 1} / {images.length}
+                </div>
+              )}
+              
               <div className="absolute bottom-4 right-4 flex space-x-2">
                 <button
                   onClick={(e) => {

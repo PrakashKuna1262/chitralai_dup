@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Camera, Calendar, Image as ImageIcon, X, Search, Download, Share2, Facebook, Instagram, Twitter, Linkedin, MessageCircle, Mail, Link } from 'lucide-react';
+import { Camera, Calendar, Image as ImageIcon, X, Search, Download, Share2, Facebook, Instagram, Twitter, Linkedin, MessageCircle, Mail, Link, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, rekognitionClientPromise, validateEnvVariables } from '../config/aws';
@@ -1124,6 +1124,50 @@ console.log(`User ${userEmail} downloading image`);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [shareMenu.isOpen]);
 
+  // Navigation functions for enlarged image view
+  const getCurrentImageIndex = () => {
+    if (!selectedImage) return -1;
+    return filteredImages.findIndex(img => img.imageUrl === selectedImage.imageUrl);
+  };
+
+  const goToNextImage = () => {
+    const currentIndex = getCurrentImageIndex();
+    if (currentIndex === -1) return;
+    const nextIndex = (currentIndex + 1) % filteredImages.length;
+    setSelectedImage(filteredImages[nextIndex]);
+  };
+
+  const goToPreviousImage = () => {
+    const currentIndex = getCurrentImageIndex();
+    if (currentIndex === -1) return;
+    const prevIndex = currentIndex === 0 ? filteredImages.length - 1 : currentIndex - 1;
+    setSelectedImage(filteredImages[prevIndex]);
+  };
+
+  // Keyboard navigation for enlarged image
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!selectedImage) return;
+      
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        goToNextImage();
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        goToPreviousImage();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setSelectedImage(null);
+        toggleHeaderFooter(true);
+      }
+    };
+
+    if (selectedImage) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [selectedImage, filteredImages]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -1497,6 +1541,8 @@ console.log(`User ${userEmail} downloading image`);
               className="w-full h-full object-contain rounded-lg"
               style={{ maxHeight: 'calc(600px - 4rem)' }}
             />
+            
+            {/* Close button */}
             <button
               className="absolute top-4 right-4 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
               onClick={() => {
@@ -1506,6 +1552,43 @@ console.log(`User ${userEmail} downloading image`);
             >
               <X className="w-8 h-8" />
             </button>
+            
+            {/* Navigation arrows */}
+            {filteredImages.length > 1 && (
+              <>
+                {/* Previous button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    goToPreviousImage();
+                  }}
+                  className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                  title="Previous image (←)"
+                >
+                  <ChevronLeft className="w-8 h-8" />
+                </button>
+                
+                {/* Next button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    goToNextImage();
+                  }}
+                  className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                  title="Next image (→)"
+                >
+                  <ChevronRight className="w-8 h-8" />
+                </button>
+              </>
+            )}
+            
+            {/* Image counter */}
+            {filteredImages.length > 1 && (
+              <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/20 text-white text-sm">
+                {getCurrentImageIndex() + 1} / {filteredImages.length}
+              </div>
+            )}
+            
             <div className="absolute bottom-4 right-4 flex space-x-2">
               <button
                 onClick={(e) => {

@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
-import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, ShieldAlert, Clock } from 'lucide-react';
+import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, ShieldAlert, Clock, Image as ImageIcon, AlertCircle, CheckCircle, Wifi, WifiOff } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getUserEvents, getEventById, updateEventData, convertToAppropriateUnit, addSizes, formatSize } from '../config/eventStorage';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { createCollection, indexFaces, indexFacesBatch } from '../services/faceRecognition';
+import { isImageFile, validateImageFile, needsConversion, getTargetFormat, getImageFormatInfo } from '../utils/imageFormats';
+import heic2any from 'heic2any';
 
 
 // Add type declaration for directory upload attributes
@@ -513,7 +515,10 @@ const UploadImage = () => {
       
       for (const file of files) {
         const fileName = file.name.toLowerCase();
-        const isValidType = file.type.startsWith('image/');
+        // Check both MIME type and file extension for HEIC/HEIF
+        const isHeicHeif = fileName.endsWith('.heic') || fileName.endsWith('.heif') ||
+                          file.type === 'image/heic' || file.type === 'image/heif';
+        const isValidType = file.type.startsWith('image/') || isHeicHeif;
         const isValidSize = file.size <= MAX_FILE_SIZE;
         const isNotSelfie = !fileName.includes('selfie') && !fileName.includes('self');
         const isDuplicate = existingFileNames.has(file.name);
@@ -614,15 +619,27 @@ const UploadImage = () => {
         retryCount
       });
 
-      // Validate file before attempting upload
-      if (!file.type.startsWith('image/')) {
+      // Validate file before attempting upload using comprehensive image format support
+      const validation = validateImageFile(file);
+      if (!validation.isValid) {
         const error: UploadError = {
           type: UPLOAD_ERROR_TYPES.INVALID_FILE_TYPE,
-          message: 'Only image files are allowed',
+          message: validation.error || 'Only image files are allowed',
           timestamp: Date.now()
         };
         uploadErrorTracker.addError(sanitizedFileName, error);
         throw new Error(error.message);
+      }
+
+      // Log format information for debugging
+      if (validation.formatInfo) {
+        console.log('[DEBUG] UploadImage.tsx: File format info:', {
+          fileName: sanitizedFileName,
+          format: validation.formatInfo.description,
+          category: validation.formatInfo.category,
+          needsConversion: validation.formatInfo.needsConversion,
+          targetFormat: validation.formatInfo.targetFormat
+        });
       }
 
       // Check file size
@@ -912,7 +929,11 @@ const UploadImage = () => {
   const detectNetworkSpeed = async (): Promise<number> => {
     try {
       const startTime = Date.now();
-      const response = await fetch('https://www.google.com/favicon.ico');
+      // Use a CORS-friendly endpoint for network speed detection
+      const response = await fetch('https://httpbin.org/bytes/1024', {
+        method: 'GET',
+        mode: 'cors'
+      });
       const blob = await response.blob();
       const endTime = Date.now();
       const durationInSeconds = (endTime - startTime) / 1000;
@@ -1426,7 +1447,7 @@ const UploadImage = () => {
                   type="file"
                   ref={fileInputRef}
                   multiple
-                  accept="image/*"
+                  accept="image/*,.heic,.heif,.raw,.cr2,.nef,.arw,.orf,.dng,.rw2,.pef,.srw,.psd,.ai,.eps,.indd,.sketch,.fig,.tga,.pcx,.xcf,.kra,.cdr,.afphoto,.afdesign"
                   onChange={handleImageChange}
                   className="hidden"
                   {...(uploadType === 'folder' ? { webkitdirectory: '', directory: '' } : {})}
@@ -1492,7 +1513,7 @@ const UploadImage = () => {
                         <input
                           type="file"
                           multiple
-                          accept="image/*"
+                          accept="image/*,.heic,.heif,.raw,.cr2,.nef,.arw,.orf,.dng,.rw2,.pef,.srw,.psd,.ai,.eps,.indd,.sketch,.fig,.tga,.pcx,.xcf,.kra,.cdr,.afphoto,.afdesign"
                           onChange={handleImageChange}
                           className="hidden"
                           id="photo-upload"
@@ -1514,7 +1535,7 @@ const UploadImage = () => {
                         <input
                           type="file"
                           multiple
-                          accept="image/*"
+                          accept="image/*,.heic,.heif,.raw,.cr2,.nef,.arw,.orf,.dng,.rw2,.pef,.srw,.psd,.ai,.eps,.indd,.sketch,.fig,.tga,.pcx,.xcf,.kra,.cdr,.afphoto,.afdesign"
                           onChange={handleImageChange}
                           className="hidden"
                           id="folder-upload"
@@ -1750,12 +1771,40 @@ const UploadImage = () => {
 
 export default UploadImage;
 
-// Add image compression function
+// Remove the old convertHeicToJpeg function and replace compressImage with this:
 const compressImage = async (file: File): Promise<Blob> => {
-  if (!file || !file.type.startsWith('image/')) {
+  if (!file) {
+    throw new Error('Invalid file for compression');
+  }
+
+  // Check for HEIC/HEIF files by both MIME type and extension
+  const fileName = file.name.toLowerCase();
+  const isHeicHeif = fileName.endsWith('.heic') || fileName.endsWith('.heif') ||
+                     file.type === 'image/heic' || file.type === 'image/heif';
+
+  if (isHeicHeif) {
+    try {
+      console.log('Converting HEIC/HEIF to JPEG:', file.name);
+      // Convert HEIC to JPEG using heic2any
+      const jpegBlob = await heic2any({
+        blob: file,
+        toType: 'image/jpeg',
+        quality: 0.8,
+      }) as Blob;
+      console.log('Successfully converted HEIC/HEIF to JPEG:', file.name);
+      return jpegBlob;
+    } catch (error) {
+      console.error('Failed to convert HEIC/HEIF image:', error);
+      throw new Error('Failed to convert HEIC/HEIF image to JPEG');
+    }
+  }
+
+  // For non-HEIC files, check if it's a valid image type
+  if (!file.type.startsWith('image/')) {
     throw new Error('Invalid file type for compression');
   }
 
+  // For non-HEIC files, use the standard compression
   return new Promise<Blob>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -1771,12 +1820,9 @@ const compressImage = async (file: File): Promise<Blob> => {
           reject(new Error('Failed to get canvas context'));
           return;
         }
-
-        // Calculate new dimensions while maintaining aspect ratio
         let width = img.width;
         let height = img.height;
         const maxDimension = MAX_DIMENSION;
-
         if (width > maxDimension || height > maxDimension) {
           if (width > height) {
             height = (height / width) * maxDimension;
@@ -1786,26 +1832,19 @@ const compressImage = async (file: File): Promise<Blob> => {
             height = maxDimension;
           }
         }
-
         canvas.width = width;
         canvas.height = height;
         ctx.drawImage(img, 0, 0, width, height);
-
         canvas.toBlob(
           (blob) => {
             if (blob && blob.size > 0) {
-              console.log('[DEBUG] UploadImage.tsx: Image compressed successfully:', {
-                originalSize: file.size,
-                compressedSize: blob.size,
-                compression: ((file.size - blob.size) / file.size * 100).toFixed(1) + '%'
-              });
               resolve(blob);
             } else {
               reject(new Error('Failed to compress image - blob is null or empty'));
             }
           },
           'image/jpeg',
-          0.8 // Compression quality (0.8 = 80%)
+          0.8
         );
       };
       img.onerror = () => reject(new Error('Failed to load image'));
@@ -1829,11 +1868,20 @@ const uploadToS3 = async (file: File, fileName: string): Promise<string> => {
 
     // Sanitize the filename
     const sanitizedFileName = sanitizeFilename(fileName);
-    const key = `events/shared/${eventId}/images/${sanitizedFileName}`;
+    
+    // For HEIC files, ensure we use a .jpg extension for better compatibility
+    let finalFileName = sanitizedFileName;
+    if (file.type === 'image/heic' || file.type === 'image/heif' || fileName.toLowerCase().endsWith('.heic') || fileName.toLowerCase().endsWith('.heif')) {
+      const nameWithoutExt = finalFileName.replace(/\.(heic|heif)$/i, '');
+      finalFileName = `${nameWithoutExt}.jpg`;
+    }
+    
+    const key = `events/shared/${eventId}/images/${finalFileName}`;
 
     console.log('[DEBUG] UploadImage.tsx: Uploading file with:', {
       originalName: fileName,
       sanitizedName: sanitizedFileName,
+      finalFileName: finalFileName,
       key: key,
       fileType: file.type,
       fileSize: file.size
@@ -1849,7 +1897,7 @@ const uploadToS3 = async (file: File, fileName: string): Promise<string> => {
         Bucket: bucketName,
         Key: key,
         Body: uint8Array,
-        ContentType: file.type || 'image/jpeg',
+        ContentType: 'image/jpeg', // Always use JPEG for better compatibility with AWS Rekognition
         ACL: 'public-read'
       },
       partSize: 1024 * 1024 * 5

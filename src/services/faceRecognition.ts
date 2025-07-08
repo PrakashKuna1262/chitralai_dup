@@ -172,6 +172,13 @@ export const indexFaces = async (eventId: string, imageKey: string): Promise<str
 
     // Get the filename from the full path
     const filename = imageKey.split('/').pop() || '';
+    
+    // Check if this is a HEIC file that wasn't converted
+    if (filename.toLowerCase().endsWith('.heic') || filename.toLowerCase().endsWith('.heif')) {
+      console.warn(`[WARN] faceRecognition.ts: HEIC file detected: ${filename}. This should have been converted to JPEG before upload.`);
+      throw new Error('HEIC format not supported by AWS Rekognition. Please convert to JPEG first.');
+    }
+    
     // Sanitize the filename for Rekognition's ExternalImageId
     const sanitizedFilename = sanitizeFilename(filename);
 
