@@ -4,7 +4,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube } from 'lucide-react';
+import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, ChevronLeft, ChevronRight } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
 import { Link, useNavigate } from 'react-router-dom';
@@ -399,6 +399,50 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     }
   };
 
+  // Navigation functions for enlarged image view
+  const getCurrentImageIndex = () => {
+    if (!selectedImage) return -1;
+    return images.findIndex(img => img.key === selectedImage.key);
+  };
+
+  const goToNextImage = () => {
+    const currentIndex = getCurrentImageIndex();
+    if (currentIndex === -1) return;
+    const nextIndex = (currentIndex + 1) % images.length;
+    setSelectedImage(images[nextIndex]);
+  };
+
+  const goToPreviousImage = () => {
+    const currentIndex = getCurrentImageIndex();
+    if (currentIndex === -1) return;
+    const prevIndex = currentIndex === 0 ? images.length - 1 : currentIndex - 1;
+    setSelectedImage(images[prevIndex]);
+  };
+
+  // Keyboard navigation for enlarged image
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!selectedImage) return;
+      
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        goToNextImage();
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        goToPreviousImage();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setSelectedImage(null);
+        toggleHeaderFooter(true);
+      }
+    };
+
+    if (selectedImage) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [selectedImage, images]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
@@ -685,6 +729,8 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                 className="w-full h-full object-contain rounded-lg"
                 style={{ maxHeight: 'calc(600px - 4rem)' }}
               />
+              
+              {/* Close button */}
               <button
                 className="absolute top-4 right-4 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
                 onClick={() => {
@@ -694,6 +740,8 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
               >
                 <X className="w-8 h-8" />
               </button>
+              
+              {/* Download button */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -702,8 +750,43 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                 className="absolute bottom-4 right-4 p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
               >
                 <Download className="w-6 h-6" />
-                
               </button>
+              
+              {/* Navigation arrows */}
+              {images.length > 1 && (
+                <>
+                  {/* Previous button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goToPreviousImage();
+                    }}
+                    className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    title="Previous image (←)"
+                  >
+                    <ChevronLeft className="w-8 h-8" />
+                  </button>
+                  
+                  {/* Next button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goToNextImage();
+                    }}
+                    className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    title="Next image (→)"
+                  >
+                    <ChevronRight className="w-8 h-8" />
+                  </button>
+                </>
+              )}
+              
+              {/* Image counter */}
+              {images.length > 1 && (
+                <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/20 text-white text-sm">
+                  {getCurrentImageIndex() + 1} / {images.length}
+                </div>
+              )}
             </div>
           </div>
         )}
