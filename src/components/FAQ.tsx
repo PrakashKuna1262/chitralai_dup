@@ -79,10 +79,10 @@ const FAQ = () => {
               <motion.div 
                 className="flex items-center partner-container"
                 animate={{
-                  x: ['0%', '-100%'],
+                  x: ['0%', '-65.66%'],
                 }}
                 transition={{
-                  duration: 10,
+                  duration: 20,
                   repeat: Infinity,
                   ease: 'linear',
                 }}
@@ -92,6 +92,37 @@ const FAQ = () => {
               >
                 {[
                   // First set of logos
+                  ...[
+                    {
+                      src: "https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png",
+                      alt: "Draper"
+                    },
+                    {
+                      src: "https://upload.wikimedia.org/wikipedia/commons/4/40/T-Hub_Logo-PNG.png",
+                      alt: "T-Hub"
+                    },
+                    {
+                      src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTjailEBhsb5i8VHPzdulQcAkPvi4QgkW_8W_YdO_GZtT0DqhyY0W04T3FNERQ_NHW9_n0&usqp=CAU",
+                      alt: "AWS for Startup"
+                    },
+                    {
+                      src: "https://tokyosuteam.metro.tokyo.lg.jp/en/cms/wp-content/uploads/1996/10/024-179.jpg",
+                      alt: "Start2"
+                    },
+                    {
+                      src: "https://upload.wikimedia.org/wikipedia/commons/0/02/German_Accelerator_Logo.png",
+                      alt: "German Accelerator"
+                    },
+                    {
+                      src: "https://hyderabad.tie.org/wp-content/uploads/2025/02/TiE-Logo-Black.png",
+                      alt: "TiE"
+                    },
+                    {
+                      src: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHpS7l6XHJgFCx3-FWabYpvaD4eSbGoIpVRSVsOgnCPue71d2UYOLNqxPdJ_gdijKzgw&usqp=CAU",
+                      alt: "alpha"
+                    }
+                  ],
+                  // Second set for seamless looping
                   ...[
                     {
                       src: "https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png",
@@ -122,7 +153,7 @@ const FAQ = () => {
                       alt: "alpha"
                     }
                   ],
-                  // Duplicate set for seamless looping
+                  // Third set for extra seamless looping
                   ...[
                     {
                       src: "https://remoters.net/wp-content/uploads/2020/06/draper-startup-house.png",
@@ -156,7 +187,7 @@ const FAQ = () => {
                 ].map((partner, index) => (
                   <div 
                     key={index}
-                    className="flex-shrink-0 h-16 w-32 sm:h-20 sm:w-40 bg-white rounded-lg shadow-sm hover:shadow-md transition-all duration-300 mx-4 flex items-center justify-center p-2"
+                    className="flex-shrink-0 h-10 w-16 xs:h-12 xs:w-20 sm:h-14 sm:w-24 md:h-16 md:w-28 lg:h-18 lg:w-32 bg-white rounded-lg shadow-sm hover:shadow-md transition-all duration-300 mx-1 xs:mx-2 sm:mx-3 flex items-center justify-center p-1"
                     onMouseEnter={handleMouseEnter}
                     onMouseLeave={handleMouseLeave}
                     onTouchStart={handleTouchStart}
