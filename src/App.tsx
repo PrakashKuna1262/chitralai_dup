@@ -18,11 +18,14 @@ import EventPhotos from './components/EventPhotos';
 import MyPhotos from './components/MyPhotos';
 import MyOrganizations from './components/MyOrganizations';
 import OrganizationEvents from './components/OrganizationEvents';
+import Profile from './components/Profile';
+import Settings from './components/Settings';
 import { queryUserByEmail, storeUserCredentials } from './config/dynamodb';
 import { migrateLocalStorageToDb } from './config/eventStorage';
 import Login from './components/Login';
 import Terms from './pages/Terms';
 import PrivacyPolicy from './pages/PrivacyPolicy';
+
 
 // Create a user context to manage authentication state
 export const UserContext = createContext<{
@@ -147,6 +150,9 @@ const App = () => {
               
               <Route path="/view-event/:eventId" element={<div className="animate-slideIn"><ViewEventWrapper /></div>} />
               <Route path="/my-organizations" element={<div className="animate-slideIn"><MyOrganizations setShowSignInModal={setShowSignInModal} /></div>} />
+              <Route path="/profile" element={<div className="animate-slideIn"><Profile /></div>} />
+              <Route path="/settings" element={<div className="animate-slideIn"><Settings /></div>} />
+              
               <Route path="/organization/:organizationCode" element={
                 <div className="animate-slideIn">
                   <OrganizationEvents 

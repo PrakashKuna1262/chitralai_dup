@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Image as ImageIcon, ArrowLeft, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Image as ImageIcon, ArrowLeft, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle, ChevronLeft, ChevronRight, RotateCw } from 'lucide-react';
 import { validateEnvVariables } from '../config/aws';
 import ProgressiveImage from './ProgressiveImage';
 
@@ -33,6 +33,9 @@ const MyPhotos: React.FC = () => {
     imageUrl: '',
     position: { top: 0, left: 0 }
   });
+  const [rotation, setRotation] = useState(0);
+  const [imageNaturalSize, setImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const modalImgRef = useRef<HTMLImageElement | null>(null);
 
   // Helper function to construct S3 URL
   const constructS3Url = (imageUrl: string, bucket?: string): string => {
@@ -145,6 +148,11 @@ const MyPhotos: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [shareMenu.isOpen]);
+
+  // Reset rotation when image changes or modal closes
+  useEffect(() => {
+    setRotation(0);
+  }, [selectedImage]);
 
   // Navigation functions for enlarged image view
   const getCurrentImageIndex = () => {
@@ -339,6 +347,67 @@ const MyPhotos: React.FC = () => {
     }
   };
 
+  // Helper to get button positions based on rotation
+  const getButtonPosition = (button: string, rotation: number) => {
+    // rotation: 0, 90, 180, 270
+    // returns Tailwind classes for absolute positioning
+    const positions = {
+      close: [
+        'top-4 right-4', // 0
+        'bottom-4 right-4', // 90
+        'bottom-4 left-4', // 180
+        'top-4 left-4', // 270
+      ],
+      left: [
+        'left-4 top-1/2 -translate-y-1/2', // 0
+        'bottom-4 left-1/2 -translate-x-1/2', // 90
+        'right-4 top-1/2 -translate-y-1/2', // 180
+        'top-4 left-1/2 -translate-x-1/2', // 270
+      ],
+      right: [
+        'right-4 top-1/2 -translate-y-1/2', // 0
+        'top-4 left-1/2 -translate-x-1/2', // 90
+        'left-4 top-1/2 -translate-y-1/2', // 180
+        'bottom-4 right-1/2 translate-x-1/2', // 270
+      ],
+      counter: [
+        'top-4 left-4', // 0
+        'bottom-4 left-4', // 90
+        'bottom-4 right-4', // 180
+        'top-4 right-4', // 270
+      ],
+      download: [
+        'bottom-4 right-4', // 0
+        'bottom-4 left-4', // 90
+        'top-4 left-4', // 180
+        'top-4 right-4', // 270
+      ],
+      share: [
+        'bottom-4 right-20', // 0
+        'bottom-20 left-4', // 90
+        'top-4 left-20', // 180
+        'top-20 right-4', // 270
+      ],
+    };
+    return positions[button][(rotation / 90) % 4];
+  };
+
+  // Replace the getButtonStyle helper with the one from ViewEvent
+  const getButtonStyle = (button: string, rotation: number) => {
+    // Returns style object for absolute positioning and counter-rotation
+    const inset = '2px';
+    const base = {
+      close: { top: inset, right: inset, zIndex: 10 },
+      left: { top: '50%', left: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      right: { top: '50%', right: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      counter: { top: inset, left: inset, zIndex: 10 },
+      download: { bottom: inset, right: '56px', zIndex: 10 }, // space for rotate
+      rotate: { bottom: inset, right: inset, zIndex: 10 },
+      share: { bottom: inset, left: inset, zIndex: 10 },
+    };
+    return base[button];
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -415,9 +484,9 @@ const MyPhotos: React.FC = () => {
             className="text-blue-600 hover:text-blue-800 flex items-center mb-4"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
-            Back to Dashboard
+            Back to Events
           </button>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">My Photos</h1>
               <p className="mt-2 text-gray-600">
@@ -427,17 +496,18 @@ const MyPhotos: React.FC = () => {
             {images.length > 0 && (
               <button
                 onClick={handleDownloadAll}
-                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex items-center w-full sm:w-auto justify-center px-3 py-2 sm:px-4 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
               >
                 <Download className="h-4 w-4 mr-2" />
                 Download All
               </button>
             )}
+            {/* Place any filter or controls here, stacked below on mobile */}
           </div>
         </div>
 
         {images.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-3 md:grid-cols-3 lg:grid-cols-6 gap-1.5">
             {images.map((image) => (
               <div
                 key={image.imageId}
@@ -483,101 +553,158 @@ const MyPhotos: React.FC = () => {
         {/* Enlarged Image Modal */}
         {selectedImage && (
           <div 
-            className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" 
+            className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
             onClick={() => {
               setSelectedImage(null);
               toggleHeaderFooter(true);
             }}
           >
-            <div className="relative bg-white rounded-lg shadow-xl max-w-[800px] max-h-[600px] w-full mx-auto" onClick={e => e.stopPropagation()}>
-              <img
-                src={selectedImage.imageUrl}
-                alt={`Enlarged photo from ${selectedImage.eventName}`}
-                className="w-full h-full object-contain rounded-lg"
-                style={{ maxHeight: 'calc(600px - 4rem)' }}
-              />
-              
+            <div
+              className="relative flex items-center justify-center bg-black rounded-2xl shadow-xl overflow-hidden"
+              style={{
+                width: 'min(90vw, 90vh)',
+                height: 'min(90vw, 90vh)',
+                minWidth: 320,
+                minHeight: 320,
+                maxWidth: 900,
+                maxHeight: 900,
+                aspectRatio: '1/1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxSizing: 'border-box',
+                padding: 0,
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div
+                className="flex items-center justify-center w-full h-full"
+                style={{
+                  boxSizing: 'border-box',
+                  padding: 5,
+                  width: '100%',
+                  height: '100%',
+                }}
+              >
+                <img
+                  ref={modalImgRef}
+                  id="modal-img"
+                  src={selectedImage.imageUrl}
+                  alt={`Enlarged photo from ${selectedImage.eventName}`}
+                  className="object-contain"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    borderRadius: 'inherit',
+                    display: 'block',
+                    transform: `rotate(${rotation}deg)`,
+                    transition: 'transform 0.3s',
+                    background: 'transparent',
+                    pointerEvents: 'auto',
+                    userSelect: 'none',
+                  }}
+                  onLoad={e => {
+                    setImageNaturalSize({
+                      width: e.currentTarget.naturalWidth,
+                      height: e.currentTarget.naturalHeight
+                    });
+                  }}
+                />
+              </div>
               {/* Close button */}
               <button
-                className="absolute top-4 right-4 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                 onClick={() => {
                   setSelectedImage(null);
                   toggleHeaderFooter(true);
                 }}
+                style={{ top: 12, right: 12, zIndex: 10 }}
+                title="Close"
               >
-                <X className="w-8 h-8" />
+                <X className="w-5 h-5 sm:w-8 sm:h-8" />
               </button>
-              
               {/* Navigation arrows */}
               {images.length > 1 && (
                 <>
-                  {/* Previous button */}
                   <button
-                    onClick={(e) => {
+                    onClick={e => {
                       e.stopPropagation();
                       goToPreviousImage();
                     }}
-                    className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                     title="Previous image (←)"
+                    style={{ left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10 }}
                   >
-                    <ChevronLeft className="w-8 h-8" />
+                    <ChevronLeft className="w-5 h-5 sm:w-8 sm:h-8" />
                   </button>
-                  
-                  {/* Next button */}
                   <button
-                    onClick={(e) => {
+                    onClick={e => {
                       e.stopPropagation();
                       goToNextImage();
                     }}
-                    className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                     title="Next image (→)"
+                    style={{ right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10 }}
                   >
-                    <ChevronRight className="w-8 h-8" />
+                    <ChevronRight className="w-5 h-5 sm:w-8 sm:h-8" />
                   </button>
                 </>
               )}
-              
               {/* Image counter */}
               {images.length > 1 && (
-                <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/20 text-white text-sm">
+                <div className="absolute px-3 py-1 sm:px-4 sm:py-2 rounded-full bg-black/40 text-white text-xs sm:text-sm shadow-lg" style={{ top: 12, left: 12, zIndex: 10 }}>
                   {getCurrentImageIndex() + 1} / {images.length}
                 </div>
               )}
-              
-              <div className="absolute bottom-4 right-4 flex space-x-2">
+              {/* Download and Rotate buttons at bottom-right with more spacing */}
+              <div className="absolute flex space-x-3 sm:space-x-6" style={{ bottom: 12, right: 20, zIndex: 10 }}>
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    // Try native sharing first
-                    if (typeof navigator.share === 'function') {
-                      handleShare('', selectedImage.imageUrl, e);
-                    } else {
-                      // Fall back to custom share menu
-                      setShareMenu({
-                        isOpen: true,
-                        imageUrl: selectedImage.imageUrl,
-                        position: {
-                          top: rect.top - 200,
-                          left: rect.left - 200
-                        }
-                      });
-                    }
-                  }}
-                  className="p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
-                >
-                  <Share2 className="w-6 h-6" />
-                </button>
-                <button
-                  onClick={(e) => {
+                  onClick={e => {
                     e.stopPropagation();
                     handleDownload(selectedImage.imageUrl, e);
                   }}
-                  className="p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
+                  className="p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                  title="Download"
                 >
-                  <Download className="w-6 h-6" />
+                  <Download className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    setRotation(r => (r + 90) % 360);
+                  }}
+                  className="p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                  title="Rotate image"
+                >
+                  <RotateCw className="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
               </div>
+              {/* Share button at bottom-left */}
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  if (typeof navigator.share === 'function') {
+                    handleShare('', selectedImage.imageUrl, e);
+                  } else {
+                    setShareMenu({
+                      isOpen: true,
+                      imageUrl: selectedImage.imageUrl,
+                      position: {
+                        top: rect.top - 200,
+                        left: rect.left - 200
+                      }
+                    });
+                  }
+                }}
+                className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                style={{ bottom: 12, left: 12, zIndex: 10 }}
+                title="Share"
+              >
+                <Share2 className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
             </div>
           </div>
         )}

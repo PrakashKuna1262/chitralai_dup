@@ -3,7 +3,7 @@ import { ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand, PutObjectC
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, rekognitionClientPromise, validateEnvVariables } from '../config/aws';
 import { DetectFacesCommand, CompareFacesCommand } from '@aws-sdk/client-rekognition';
-import { Download, Trash2, Camera } from 'lucide-react';
+import { Download, Trash2, Camera, RotateCw, X, Share2 } from 'lucide-react';
 import { getEventById, updateEventData, convertToAppropriateUnit, subtractSizes } from '../config/eventStorage';
 import ProgressiveImage from './ProgressiveImage';
 
@@ -29,6 +29,7 @@ const EventImages = ({ eventId }: EventImagesProps) => {
   const [processingStatus, setProcessingStatus] = useState('');
   const [deleting, setDeleting] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<ProcessedImage | null>(null);
+  const [rotation, setRotation] = useState(0);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const IMAGES_PER_PAGE = 300;
@@ -271,6 +272,10 @@ const EventImages = ({ eventId }: EventImagesProps) => {
     fetchBucketName();
   }, []);
 
+  useEffect(() => {
+    setRotation(0);
+  }, [selectedImage]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px] bg-gray-50 rounded-lg">
@@ -288,10 +293,16 @@ const EventImages = ({ eventId }: EventImagesProps) => {
     }
 
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1.5">
         {images.map((image, index) => (
-          <div key={image.key} className="relative group">
-            <div className="aspect-square relative">
+          <div
+            key={image.key}
+            className="relative group"
+          >
+            <div
+              className="aspect-square relative cursor-pointer"
+              onClick={() => setSelectedImage(image)}
+            >
               <ProgressiveImage
                 compressedSrc={image.url}
                 originalSrc={image.url}
@@ -327,6 +338,42 @@ const EventImages = ({ eventId }: EventImagesProps) => {
     );
   };
 
+  // Helper to get button style for anchoring to image
+  const getButtonStyle = (button: string, rotation: number) => {
+    // Returns style object for absolute positioning and counter-rotation
+    const inset = '2px';
+    const base = {
+      close: { top: inset, right: inset, zIndex: 10 },
+      left: { top: '50%', left: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      right: { top: '50%', right: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      counter: { top: inset, left: inset, zIndex: 10 },
+      download: { bottom: inset, right: '56px', zIndex: 10 }, // space for rotate
+      rotate: { bottom: inset, right: inset, zIndex: 10 },
+      share: { bottom: inset, left: inset, zIndex: 10 },
+    };
+    return base[button as keyof typeof base];
+  };
+
+  // Helper to get image aspect ratio and dynamic overlay size
+  const getOverlayStyle = (img: HTMLImageElement | null, rotation: number) => {
+    let aspect = 4 / 3;
+    if (img && img.naturalWidth && img.naturalHeight) {
+      aspect = img.naturalWidth / img.naturalHeight;
+      if (rotation % 180 !== 0) aspect = 1 / aspect;
+    }
+    return {
+      width: aspect >= 1 ? '70%' : `${70 * aspect}%`,
+      height: aspect >= 1 ? `${70 / aspect}%` : '70%',
+      maxWidth: '70%',
+      maxHeight: '70%',
+      borderRadius: '2rem 2rem 4rem 4rem/3rem 3rem 6rem 6rem',
+      background: 'rgba(255,255,255,0.7)',
+      boxShadow: '0 4px 32px 0 rgba(0,0,0,0.10)',
+      overflow: 'hidden',
+      transform: `rotate(${rotation}deg)`
+    };
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-6 mb-4 sm:mb-6">
@@ -358,6 +405,105 @@ const EventImages = ({ eventId }: EventImagesProps) => {
           >
             {loading ? 'Loading...' : 'Load More'}
           </button>
+        </div>
+      )}
+      {selectedImage && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div
+            className="relative flex items-center justify-center bg-white rounded-2xl shadow-xl overflow-hidden"
+            style={{
+              width: 'min(90vw, 90vh)',
+              height: 'min(90vw, 90vh)',
+              minWidth: 320,
+              minHeight: 320,
+              maxWidth: 900,
+              maxHeight: 900,
+              aspectRatio: '1/1',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxSizing: 'border-box',
+              padding: 0,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Image with 4–5px gap, centered, rotates */}
+            <div
+              className="flex items-center justify-center w-full h-full"
+              style={{
+                boxSizing: 'border-box',
+                padding: 5,
+                width: '100%',
+                height: '100%',
+              }}
+            >
+              <img
+                id="modal-img"
+                src={selectedImage.url}
+                alt="Enlarged event photo"
+                className="object-contain"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  borderRadius: 'inherit',
+                  display: 'block',
+                  transform: `rotate(${rotation}deg)`,
+                  transition: 'transform 0.3s',
+                  background: 'transparent',
+                  pointerEvents: 'auto',
+                  userSelect: 'none',
+                }}
+              />
+            </div>
+            {/* Action icons - not rotating, always on top, with consistent background */}
+            {/* Close button */}
+            <button
+              className="absolute p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+              onClick={() => setSelectedImage(null)}
+              style={{ top: 12, right: 12, zIndex: 10 }}
+              title="Close"
+            >
+              <X className="w-8 h-8" />
+            </button>
+            <div className="absolute flex space-x-6" style={{ bottom: 12, right: 20, zIndex: 10 }}>
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  handleDownload(selectedImage);
+                }}
+                className="p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                title="Download"
+              >
+                <Download className="w-6 h-6" />
+              </button>
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  setRotation(r => (r + 90) % 360);
+                }}
+                className="p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                title="Rotate image"
+              >
+                <RotateCw className="w-6 h-6" />
+              </button>
+            </div>
+            <button
+              onClick={e => {
+                e.stopPropagation();
+                // Add share logic if needed
+              }}
+              className="absolute p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+              style={{ bottom: 12, left: 12, zIndex: 10 }}
+              title="Share"
+            >
+              <Share2 className="w-6 h-6" />
+            </button>
+          </div>
         </div>
       )}
     </div>

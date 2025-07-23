@@ -72,6 +72,7 @@ export const storeUserCredentials = async (userData: {
     organizationName?: string;
     organizationCode?: string;
     organizationLogo?: string;
+    branding?: boolean;
 }) => {
     const ddbDocClient = await docClientPromise;
     try {
@@ -86,7 +87,7 @@ export const storeUserCredentials = async (userData: {
                     Key: {
                         userId: userData.userId
                     },
-                    UpdateExpression: 'SET updatedAt = :updatedAt, #role = :role, #name = :name, #mobile = :mobile, organizationName = :organizationName, organizationCode = :organizationCode, organizationLogo = :organizationLogo',
+                    UpdateExpression: 'SET updatedAt = :updatedAt, #role = :role, #name = :name, #mobile = :mobile, organizationName = :organizationName, organizationCode = :organizationCode, organizationLogo = :organizationLogo, branding = :branding',
                     ExpressionAttributeValues: {
                         ':updatedAt': new Date().toISOString(),
                         ':role': userData.role || existingUser.role || null,
@@ -94,7 +95,8 @@ export const storeUserCredentials = async (userData: {
                         ':mobile': userData.mobile,
                         ':organizationName': userData.organizationName || existingUser?.organizationName || undefined,
                         ':organizationCode': userData.organizationCode || existingUser?.organizationCode || undefined,
-                        ':organizationLogo': userData.organizationLogo || existingUser?.organizationLogo || undefined
+                        ':organizationLogo': userData.organizationLogo || existingUser?.organizationLogo || undefined,
+                        ':branding': userData.branding !== undefined ? userData.branding : existingUser?.branding || false
                     },
                     ExpressionAttributeNames: {
                         '#role': 'role',
@@ -141,6 +143,7 @@ export const storeUserCredentials = async (userData: {
                     organizationName: userData.organizationName || undefined,
                     organizationCode: userData.organizationCode || undefined,
                     organizationLogo: userData.organizationLogo || undefined,
+                    branding: userData.branding !== undefined ? userData.branding : false,
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                 }
@@ -162,6 +165,7 @@ export const storeUserCredentials = async (userData: {
                 organizationName: userData.organizationName || existingUser?.organizationName || undefined,
                 organizationCode: existingUser?.organizationCode || userData.organizationCode || undefined,
                 organizationLogo: userData.organizationLogo || existingUser?.organizationLogo || undefined,
+                branding: userData.branding !== undefined ? userData.branding : existingUser?.branding || false,
                 createdAt: existingUser?.createdAt || new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             }
@@ -214,6 +218,57 @@ export const queryUserByEmail = async (email: string) => {
     } catch (error) {
         console.error('Error scanning for user by email:', error);
         return null;
+    }
+};
+
+// Function to update user data
+export const updateUserData = async (userId: string, updates: {
+    name?: string;
+    mobile?: string;
+    role?: string;
+    organizationName?: string;
+    organizationCode?: string;
+    organizationLogo?: string;
+    branding?: boolean;
+}) => {
+    const ddbDocClient = await docClientPromise;
+    try {
+        const updateExpressions: string[] = [];
+        const expressionAttributeValues: any = {};
+        const expressionAttributeNames: any = {};
+
+        // Build update expression dynamically
+        Object.entries(updates).forEach(([key, value]) => {
+            if (value !== undefined) {
+                updateExpressions.push(`#${key} = :${key}`);
+                expressionAttributeValues[`:${key}`] = value;
+                expressionAttributeNames[`#${key}`] = key;
+            }
+        });
+
+        // Always update the updatedAt timestamp
+        updateExpressions.push('updatedAt = :updatedAt');
+        expressionAttributeValues[':updatedAt'] = new Date().toISOString();
+
+        if (updateExpressions.length === 0) {
+            return false; // No updates to make
+        }
+
+        const command = new UpdateCommand({
+            TableName: USERS_TABLE,
+            Key: {
+                userId: userId
+            },
+            UpdateExpression: `SET ${updateExpressions.join(', ')}`,
+            ExpressionAttributeValues: expressionAttributeValues,
+            ExpressionAttributeNames: expressionAttributeNames
+        });
+
+        await ddbDocClient.send(command);
+        return true;
+    } catch (error) {
+        console.error('Error updating user data:', error);
+        return false;
     }
 };
 

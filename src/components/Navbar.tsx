@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
-import { Menu, X, Upload, Camera, LogIn, LogOut, User, MessageSquare, Phone, Mail, AlertCircle, Calendar, ChevronDown, ChevronUp, ImageIcon } from 'lucide-react';
+import { Menu, X, Upload, Camera, LogIn, User, MessageSquare, Phone, Mail, AlertCircle, Calendar, ChevronDown, ChevronUp, ImageIcon } from 'lucide-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
@@ -9,6 +9,8 @@ import PhoneVerification from './PhoneVerification';
 import { s3ClientPromise, getOrganizationLogoPath, getOrganizationLogoUrl, ensureFolderStructure, getOrganizationFolderPath, validateEnvVariables } from '../config/aws';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { setupTokenRefresh, clearTokenRefresh, shouldRefreshToken } from '../config/auth';
+// ProfileDropdown is now only used in the desktop view
+import ProfileDropdown from './ProfileDropdown';
 
 interface NavbarProps {
   mobileMenuOpen: boolean;
@@ -30,6 +32,7 @@ interface UserProfile {
   email: string;
   picture: string;
   mobile: string;
+  organizationCode?: string;
 }
 
 const Navbar: React.FC<NavbarProps> = ({ 
@@ -66,6 +69,7 @@ const Navbar: React.FC<NavbarProps> = ({
   const [scrolled, setScrolled] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTab] = useState<'signin' | 'signup'>('signin');
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const tokenRefreshInterval = useRef<NodeJS.Timeout | null>(null);
 
   const setAuthCookie = (token: string, expiresIn: number) => {
@@ -96,7 +100,13 @@ const Navbar: React.FC<NavbarProps> = ({
           
           if (exp > Date.now()) {
             setIsLoggedIn(true);
-            setUserProfile(JSON.parse(storedProfile));
+            const parsedProfile = JSON.parse(storedProfile);
+            // Always merge organizationCode from localStorage if missing
+            const orgCodeFromStorage = parsedProfile.organizationCode || JSON.parse(localStorage.getItem('userProfile') || '{}').organizationCode;
+            setUserProfile({
+              ...parsedProfile,
+              organizationCode: orgCodeFromStorage || undefined
+            });
             setUserEmail(decoded.email);
             
             // Set up token refresh if needed
@@ -261,7 +271,7 @@ const Navbar: React.FC<NavbarProps> = ({
       }
 
       // Store the token in both cookie and localStorage
-      setAuthCookie(credential, 3600); // 1 hour expiration
+      setAuthCookie(credential, 36000); // 10 hours expiration
       localStorage.setItem('googleToken', credential);
       
       // Get the stored data
@@ -373,6 +383,24 @@ const Navbar: React.FC<NavbarProps> = ({
         organizationCode: organizationCode || undefined,
         organizationLogo: logoUrl || undefined
       };
+      // Fetch latest user data from DB and store organization details in localStorage
+      try {
+        const latestUser = await getUserByEmail(email);
+        if (latestUser) {
+          localStorage.setItem('profileOrganizationDetails', JSON.stringify({
+            organizationName: latestUser.organizationName || '',
+            organizationCode: latestUser.organizationCode || '',
+            organizationLogo: latestUser.organizationLogo || ''
+          }));
+        }
+      } catch (e) {
+        // fallback to userData
+        localStorage.setItem('profileOrganizationDetails', JSON.stringify({
+          organizationName: userData.organizationName || '',
+          organizationCode: userData.organizationCode || '',
+          organizationLogo: userData.organizationLogo || ''
+        }));
+      }
 
       console.log('Storing user data in DynamoDB:', userData);
       await storeUserCredentials(userData);
@@ -393,6 +421,18 @@ const Navbar: React.FC<NavbarProps> = ({
         organizationCode: userData.organizationCode,
         organizationLogo: userData.organizationLogo
       }));
+      // Always set organizationCode in localStorage for quick access
+      if (userData.organizationCode) {
+        localStorage.setItem('organizationCode', userData.organizationCode);
+      }
+      // Immediately update userProfile state for dropdown
+      setUserProfile({
+        name,
+        email,
+        picture,
+        mobile: userData.mobile,
+        organizationCode: userData.organizationCode || undefined
+      });
 
       // Clear the pending data
       localStorage.removeItem('pendingPhoneNumber');
@@ -403,7 +443,8 @@ const Navbar: React.FC<NavbarProps> = ({
         name,
         email,
         picture,
-        mobile: userData.mobile
+        mobile: userData.mobile,
+        organizationCode: userData.organizationCode || undefined
       });
       setUserEmail(email);
       setIsLoggedIn(true);
@@ -586,6 +627,24 @@ const Navbar: React.FC<NavbarProps> = ({
         organizationCode: organizationCode || undefined,
         organizationLogo: logoUrl || undefined
       };
+      // Fetch latest user data from DB and store organization details in localStorage
+      try {
+        const latestUser = await getUserByEmail(email);
+        if (latestUser) {
+          localStorage.setItem('profileOrganizationDetails', JSON.stringify({
+            organizationName: latestUser.organizationName || '',
+            organizationCode: latestUser.organizationCode || '',
+            organizationLogo: latestUser.organizationLogo || ''
+          }));
+        }
+      } catch (e) {
+        // fallback to userData
+        localStorage.setItem('profileOrganizationDetails', JSON.stringify({
+          organizationName: userData.organizationName || '',
+          organizationCode: userData.organizationCode || '',
+          organizationLogo: userData.organizationLogo || ''
+        }));
+      }
 
       console.log('Creating new user in DynamoDB:', userData);
       await storeUserCredentials(userData);
@@ -607,6 +666,18 @@ const Navbar: React.FC<NavbarProps> = ({
         organizationCode: organizationCode,
         organizationLogo: logoUrl
       }));
+      // Always set organizationCode in localStorage for quick access
+      if (organizationCode) {
+        localStorage.setItem('organizationCode', organizationCode);
+      }
+      // Immediately update userProfile state for dropdown
+      setUserProfile({
+        name,
+        email,
+        picture,
+        mobile: phoneNumber,
+        organizationCode: organizationCode || undefined
+      });
 
       // Clear the pending data
       localStorage.removeItem('pendingPhoneNumber');
@@ -617,7 +688,8 @@ const Navbar: React.FC<NavbarProps> = ({
         name,
         email,
         picture,
-        mobile: phoneNumber
+        mobile: phoneNumber,
+        organizationCode: organizationCode || undefined
       });
       setUserEmail(email);
       setIsLoggedIn(true);
@@ -644,6 +716,18 @@ const Navbar: React.FC<NavbarProps> = ({
       setSignInError('Failed to sign up. Please try again.');
     }
   };
+
+  // Listen for changes to userProfile in localStorage and update dropdown quickly
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'userProfile' && e.newValue) {
+        const parsed = JSON.parse(e.newValue);
+        setUserProfile(parsed);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   return (              
     <header 
@@ -734,23 +818,39 @@ const Navbar: React.FC<NavbarProps> = ({
                   <Link to="/my-organizations" className={`text-base whitespace-nowrap font-semibold leading-6 text-blue-600 hover:text-blue-800 transition-all duration-300 hover:scale-105 px-5 py-2 rounded-lg hover:bg-blue-50 flex items-center ${location.pathname === '/my-organizations' ? 'bg-blue-50' : ''}`}>
                     <User className="h-4 w-4 mr-2" />My Organizations
                   </Link>
+                  {/* Removed My Organizations link */}
                 </>
               )}
               
-              {/* Always show logout button when logged in */}
-              <button
-                onClick={handleLogout}
-                className="text-base font-semibold leading-6 text-blue-600 hover:text-blue-800 transition-all duration-300 hover:scale-105 px-5 py-2 rounded-lg hover:bg-blue-50 flex items-center"
-              >
-                <LogOut className="h-4 w-4 mr-2" />Logout
-              </button>
+              {/* Profile Dropdown */}
+              {userProfile && (
+                <ProfileDropdown
+                  userProfile={userProfile}
+                  onLogout={handleLogout}
+                  onProfileClick={() => {
+                    // Navigate to profile page or show profile modal
+                    console.log('Profile clicked');
+                  }}
+                  onSettingsClick={() => {
+                    // Navigate to settings page or show settings modal
+                    console.log('Settings clicked');
+                  }}
+                  organizationCode={userProfile.organizationCode}
+                />
+              )}
             </div>
           )}
         </div>
       </nav>
 
       {/* Mobile menu - updated for better styling */}
-      <div className={`lg:hidden ${mobileMenuOpen ? 'fixed inset-0 z-[1100]' : 'hidden'}`}>
+      <div 
+        className={`lg:hidden ${mobileMenuOpen ? 'fixed inset-0 z-[1100]' : 'hidden'}`}
+        onClick={() => {
+          // Close profile dropdown when clicking on the overlay
+          setShowProfileDropdown(false);
+        }}
+      >
         <div className="fixed inset-0 bg-black/30" aria-hidden="true" onClick={() => setMobileMenuOpen(false)} />
         <div className="fixed inset-y-0 right-0 z-[1200] w-full overflow-y-auto bg-white px-6 py-6 sm:max-w-sm sm:ring-1 sm:ring-gray-900/10 transform transition-transform duration-300 ease-in-out">
           <div className="flex items-center justify-between">
@@ -865,16 +965,77 @@ const Navbar: React.FC<NavbarProps> = ({
                       </>
                     )}
 
-                    {/* Always show logout option when logged in */}
-                    <button
-                      onClick={() => {
-                        handleLogout();
-                        setMobileMenuOpen(false);
-                      }}
-                      className="-mx-3 block rounded-lg px-3 py-2 text-base font-semibold leading-7 text-blue-600 hover:text-blue-800 hover:bg-blue-50 w-full text-left flex items-center"
-                    >
-                      <LogOut className="h-5 w-5 mr-2" /> Logout
-                    </button>
+                    {/* Profile Section */}
+                    <div className="relative">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowProfileDropdown(!showProfileDropdown);
+                        }}
+                        className="-mx-4 w-full flex items-center justify-between px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-50 rounded-md"
+                        aria-expanded={showProfileDropdown}
+                      >
+                        <div className="flex items-center">
+                          <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden border border-gray-300">
+                            {userProfile?.picture ? (
+                              <img 
+                                src={userProfile.picture} 
+                                alt="Profile" 
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <User className="h-4 w-4 text-gray-600" />
+                            )}
+                          </div>
+                          <span className="ml-2">My Account</span>
+                        </div>
+                        <ChevronDown 
+                          className={`h-4 w-4 text-gray-500 transition-transform duration-200 ${showProfileDropdown ? 'transform rotate-180' : ''}`}
+                          aria-hidden="true"
+                        />
+                      </button>
+                      
+                      {/* Dropdown menu */}
+                      {showProfileDropdown && (
+                        <div className="mt-1 py-1 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                          <Link
+                            to="/profile"
+                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                            onClick={() => {
+                              setMobileMenuOpen(false);
+                              setShowProfileDropdown(false);
+                            }}
+                          >
+                            Your Profile
+                          </Link>
+                          <Link
+                            to="/settings"
+                            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                            onClick={() => {
+                              setMobileMenuOpen(false);
+                              setShowProfileDropdown(false);
+                            }}
+                          >
+                            Account Settings
+                          </Link>
+                          <div className="border-t border-gray-100 my-1"></div>
+                          <button
+                            onClick={() => {
+                              handleLogout();
+                              setMobileMenuOpen(false);
+                              setShowProfileDropdown(false);
+                            }}
+                            className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                          >
+                            Sign out
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
@@ -1045,7 +1206,7 @@ const Navbar: React.FC<NavbarProps> = ({
                      className="flex items-center justify-center w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition-colors">
                     <Mail className="h-5 w-5" />
                   </a>
-                  <a href="tel:+91897772553" 
+                  <a href="tel:+918977725553" 
                      className="flex items-center justify-center w-10 h-10 rounded-full bg-purple-500 text-white hover:bg-purple-600 transition-colors">
                     <Phone className="h-5 w-5" />
                   </a>
