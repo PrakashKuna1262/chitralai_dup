@@ -324,5 +324,3 @@ const MyOrganizations: React.FC<MyOrganizationsProps> = ({ setShowSignInModal })
 };
 
 export default MyOrganizations;
-
-//abcdefghijklmnopqrstuvwxyz
