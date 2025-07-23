@@ -231,7 +231,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       const existingMatches = await getMatchedImages(userEmail, event.id);
       
       if (existingMatches && existingMatches.matchedImages && existingMatches.matchedImages.length > 0) {
-        // If we have existing matches, navigate directly to the photos page
+        localStorage.setItem('path', `/organization-events/${organizationCode}`);
         navigate(`/event-photos/${event.id}`);
         return;
       }
@@ -283,6 +283,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       }
 
       // Navigate to the photos page only if matches were found
+      localStorage.setItem('path', `/organization-events/${organizationCode}`);
       navigate(`/event-photos/${event.id}`);
       
     } catch (error: any) {
@@ -340,7 +341,7 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
             <p className="text-gray-500">No events found for this organization</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             {events.map((event) => (
               <div
                 key={event.id}

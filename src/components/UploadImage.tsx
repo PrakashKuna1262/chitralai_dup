@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Upload } from '@aws-sdk/lib-storage';
-import { s3ClientPromise, validateEnvVariables } from '../config/aws';
+import { s3ClientPromise, validateEnvVariables, getOrganizationLogoUrl } from '../config/aws';
 import { Upload as UploadIcon, X, Download, ArrowLeft, Copy, Loader2, Camera, ShieldAlert, Clock, Image as ImageIcon, AlertCircle, CheckCircle, Wifi, WifiOff } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -9,6 +9,11 @@ import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { createCollection, indexFaces, indexFacesBatch } from '../services/faceRecognition';
 import { isImageFile, validateImageFile, needsConversion, getTargetFormat, getImageFormatInfo } from '../utils/imageFormats';
 import heic2any from 'heic2any';
+import { SiGoogledrive } from 'react-icons/si';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+import sharp from 'sharp';
+import { queryUserByEmail } from '../config/dynamodb';
 
 
 // Add type declaration for directory upload attributes
@@ -203,6 +208,51 @@ interface DualProgress {
   overallEstimatedTime?: number;
 }
 
+// Add convertToJpg helper at the top-level (if not already present):
+const convertToJpg = (file: File): Promise<File> => {
+  return new Promise(async (resolve, reject) => {
+    const fileName = file.name.toLowerCase();
+    const isHeicHeif = fileName.endsWith('.heic') || fileName.endsWith('.heif') || file.type === 'image/heic' || file.type === 'image/heif';
+    if (isHeicHeif) {
+      try {
+        const jpegBlob = await heic2any({
+          blob: file,
+          toType: 'image/jpeg',
+          quality: 0.9,
+        }) as Blob;
+        const jpgFile = new File([jpegBlob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+        resolve(jpgFile);
+        return;
+      } catch (err) {
+        reject(new Error('Failed to convert HEIC/HEIF image to JPG'));
+        return;
+      }
+    }
+    // For other image types, use canvas
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('Failed to get canvas context'));
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error('Failed to convert image to JPG'));
+          const jpgFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+          resolve(jpgFile);
+        }, 'image/jpeg', 0.9);
+      };
+      img.onerror = reject;
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
 const UploadImage = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -224,9 +274,75 @@ const UploadImage = () => {
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
   const [authorizationMessage, setAuthorizationMessage] = useState<string>('');
   const [totalSize, setTotalSize] = useState<number>(0);
-  const [uploadType, setUploadType] = useState<'folder' | 'photos'>('photos');
+  const [uploadType, setUploadType] = useState<'folder' | 'photos' | 'drive'>('photos');
   const [isDragging, setIsDragging] = useState(false);
   const [dualProgress, setDualProgress] = useState<DualProgress | null>(null);
+  const [driveLink, setGoogleDriveLink] = useState('');
+  const [isDriveUploading, setIsDriveUploading] = useState(false);
+  const [popup, setPopup] = useState<{ type: 'success' | 'error' | 'warning'; message: string; link?: string } | null>(null);
+  const [driveUploadProgress, setDriveUploadProgress] = useState<number>(0);
+  const [driveUploadResult, setDriveUploadResult] = useState<'idle' | 'success' | 'error'>('idle');
+  const driveProgressTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [driveFillProgress, setDriveFillProgress] = useState<number>(0);
+  const [branding, setBranding] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  // Add state for animated dots and interval ref at the top of the component:
+  const [updatingDots, setUpdatingDots] = useState('');
+  const updatingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const fillIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Function to manually refresh logo URL
+  const refreshLogoUrl = useCallback(async () => {
+    const userEmail = localStorage.getItem('userEmail');
+    if (!userEmail) return;
+    
+    console.log('[Logo Refresh] Manually refreshing logo URL...');
+    
+    try {
+      // Try to find logo in S3 bucket directly
+      const { bucketName } = await validateEnvVariables();
+      const s3Client = await s3ClientPromise;
+      const listCommand = new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: `users/${userEmail}/logo/`
+      });
+      
+      const listedObjects = await s3Client.send(listCommand);
+      console.log('[Logo Refresh] Found objects in S3:', listedObjects.Contents?.map(obj => obj.Key));
+      
+      if (listedObjects.Contents && listedObjects.Contents.length > 0) {
+        const logoKey = listedObjects.Contents[0].Key;
+        const newLogoUrl = `https://${bucketName}.s3.amazonaws.com/${logoKey}`;
+        
+        // Test if the URL is accessible
+        try {
+          const response = await fetch(newLogoUrl, { method: 'HEAD' });
+          if (!response.ok) {
+            console.error('[Logo Refresh] Logo URL is not accessible:', newLogoUrl, 'Status:', response.status);
+            setLogoUrl(null);
+          } else {
+            console.log('[Logo Refresh] Logo URL is accessible:', newLogoUrl);
+            setLogoUrl(newLogoUrl);
+          }
+        } catch (fetchError) {
+          console.error('[Logo Refresh] Error testing logo URL accessibility:', fetchError);
+          setLogoUrl(null);
+        }
+      } else {
+        console.log('[Logo Refresh] No logo found in S3 bucket');
+      }
+    } catch (error) {
+      console.error('[Logo Refresh] Error searching S3 for logo:', error);
+    }
+  }, []);
+
+  // Auto-dismiss popup after 3 seconds
+  useEffect(() => {
+    if (popup) {
+      const timer = setTimeout(() => setPopup(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [popup]);
 
   // Handle drag events
   const handleDragEnter = (e: React.DragEvent) => {
@@ -574,7 +690,7 @@ const UploadImage = () => {
       // Only update state if we have valid files and no duplicates
       if (validFiles.length > 0 && duplicateFiles.length === 0) {
         setImages(prev => [...prev, ...validFiles]);
-        setTotalSize(prev => prev + newTotalSize);
+        setTotalSize(prev => prev + validFiles.reduce((sum, f) => sum + f.size, 0));
       }
     }
   }, [images]);
@@ -1053,135 +1169,184 @@ const UploadImage = () => {
         batches.push(uniqueImages.slice(i, i + BATCH_SIZE));
       }
 
-      let totalProcessedBytes = 0;
+      let totalOriginalBytes = 0;
       let totalCompressedBytes = 0;
       let totalUploadedBytes = 0;
       let totalUploadedCount = 0;
-      const allUploadedUrls = [];
-
-      // Calculate total compressed size first
-      for (const file of uniqueImages) {
-        try {
-          const compressedBlob = await compressImage(file);
-          totalCompressedBytes += compressedBlob.size;
-          URL.revokeObjectURL(URL.createObjectURL(compressedBlob));
-        } catch (error) {
-          totalCompressedBytes += file.size; // Use original size if compression fails
-        }
-      }
+      const allUploadedUrls: string[] = [];
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
-        const batchStartIndex = batchIndex * BATCH_SIZE;
-        
-        // 1. Compress batch
-        const compressedFiles = [];
-        for (let i = 0; i < batch.length; i++) {
-          const file = batch[i];
-          const globalIndex = batchStartIndex + i;
-          
+        // Get latest branding status from localStorage for this upload
+        const brandingFromStorage = localStorage.getItem('branding');
+        const currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
+
+        // --- Fetch the latest logo URL from userProfile/localStorage before each batch ---
+        let latestLogoUrl = null;
+        const userProfileStr = localStorage.getItem('userProfile');
+        if (userProfileStr) {
           try {
-            const startTime = Date.now();
-            const compressedBlob = await compressImage(file);
-            const compressedFile = new File([compressedBlob], file.name, { type: file.type });
-            compressedFiles.push(compressedFile);
-            
-            totalProcessedBytes += file.size;
-
-            // Update optimization progress based on total unique images
-            const timePerByte = (Date.now() - startTime) / file.size;
-            const remainingBytes = totalUniqueBytes - totalProcessedBytes;
-            const estimatedRemainingTime = timePerByte * remainingBytes / 1000;
-
-            setDualProgress(prev => ({
-              ...prev!,
-              optimization: {
-                ...prev!.optimization,
-                current: globalIndex + 1,
-                total: totalUniqueCount,
-                processedBytes: totalProcessedBytes,
-                totalBytes: totalUniqueBytes,
-                estimatedTimeRemaining: estimatedRemainingTime
-              },
-              currentStage: 'optimization'
-            }));
-
-            URL.revokeObjectURL(URL.createObjectURL(compressedBlob));
-          } catch (error) {
-            console.error('Error compressing file:', file.name, error);
-            compressedFiles.push(file);
-            totalProcessedBytes += file.size;
+            const userProfile = JSON.parse(userProfileStr);
+            if (userProfile.organizationLogo) {
+              latestLogoUrl = userProfile.organizationLogo;
+            }
+          } catch (e) {
+            console.error('Error parsing userProfile:', e);
           }
         }
+        // Fallback to previous logoUrl state if not found
+        if (!latestLogoUrl) latestLogoUrl = logoUrl;
+        // --- Add cache-busting query param to force latest logo fetch ---
+        if (latestLogoUrl) {
+          const ts = Date.now();
+          latestLogoUrl = latestLogoUrl.split('?')[0] + '?t=' + ts;
+        }
+        // --- End fetch latest logo URL ---
 
-        // 2. Upload batch
-        setDualProgress(prev => ({
-          ...prev!,
-          currentStage: 'upload',
-          upload: {
-            ...prev!.upload,
-            current: totalUploadedCount,
-            total: totalUniqueCount,
-            processedBytes: totalUploadedBytes,
-            totalBytes: totalCompressedBytes // Use total compressed size for all images
+        console.log('[Upload] Using branding status:', {
+          branding: currentBranding,
+          logoUrl: latestLogoUrl,
+          eventId: selectedEvent,
+          brandingFromStorage: brandingFromStorage
+        });
+        
+        // Also check userProfile for branding
+        if (userProfileStr) {
+          try {
+            const userProfile = JSON.parse(userProfileStr);
+            console.log('[Upload] UserProfile branding:', userProfile.branding);
+          } catch (e) {
+            console.error('Error parsing userProfile:', e);
+          }
+        }
+        
+        // Compress all images in the batch in parallel
+        const compressResults = await Promise.all(batch.map(async (file, idx) => {
+          totalOriginalBytes += file.size;
+          try {
+            // Only convert HEIC/HEIF to JPEG at this point
+            let fileToCompress = file;
+            const fileName = file.name.toLowerCase();
+            const isHeicHeif = fileName.endsWith('.heic') || fileName.endsWith('.heif') || file.type === 'image/heic' || file.type === 'image/heif';
+            if (isHeicHeif) {
+              fileToCompress = await convertToJpg(file);
+            }
+            const shouldBrand = !!currentBranding;
+            const logoForBranding = shouldBrand ? latestLogoUrl : null;
+            const compressedBlob = await compressImage(fileToCompress, 0.8, shouldBrand, logoForBranding);
+            totalCompressedBytes += compressedBlob.size;
+            const compressedFile = new File([compressedBlob], fileToCompress.name, { type: 'image/jpeg' });
+            URL.revokeObjectURL(URL.createObjectURL(compressedBlob));
+            setDualProgress(prev => prev && {
+              ...prev,
+              optimization: {
+                ...prev.optimization,
+                current: prev.optimization.current + 1,
+                processedBytes: prev.optimization.processedBytes + file.size
+              }
+            });
+            return { file: compressedFile, size: compressedBlob.size };
+          } catch (error) {
+            totalCompressedBytes += file.size;
+            setDualProgress(prev => prev && {
+              ...prev,
+              optimization: {
+                ...prev.optimization,
+                current: prev.optimization.current + 1,
+                processedBytes: prev.optimization.processedBytes + file.size
+              }
+            });
+            return { file, size: file.size };
           }
         }));
-
-        const batchUploadStartTime = Date.now();
-        
-        // Upload files one by one to track progress accurately
-        for (const file of compressedFiles) {
+        // Upload all compressed files in the batch in parallel
+        const uploadResults = await Promise.all(compressResults.map(async ({ file, size }, idx) => {
           try {
             const uploadResult = await uploadToS3WithRetry(file, file.name);
             allUploadedUrls.push(uploadResult);
-            
-            totalUploadedBytes += file.size;
+            totalUploadedBytes += size;
             totalUploadedCount++;
-
-            // Update upload progress after each file using total counts
-            const uploadSpeed = totalUploadedBytes / ((Date.now() - uploadStartTime) / 1000);
-            const remainingUploadBytes = totalCompressedBytes - totalUploadedBytes;
-            const estimatedUploadTime = remainingUploadBytes / uploadSpeed;
-
-            setDualProgress(prev => ({
-              ...prev!,
-              upload: {
-                ...prev!.upload,
-                current: totalUploadedCount,
-                total: totalUniqueCount,
-                processedBytes: totalUploadedBytes,
-                totalBytes: totalCompressedBytes,
-                uploadSpeed,
-                estimatedTimeRemaining: estimatedUploadTime
-              }
-            }));
+            // Update upload speed and estimated time after each upload
+            const now = Date.now();
+            const elapsed = (now - uploadStartTime) / 1000; // seconds
+            const speed = totalUploadedBytes / (elapsed || 1); // bytes/sec
+            const remainingBytes = totalBytes - totalUploadedBytes;
+            const estimatedTimeRemaining = speed > 0 ? remainingBytes / speed : 0;
+            
+            // Update progress immediately after each file upload
+            setDualProgress(prev => {
+              if (!prev) return prev;
+              const newUploadCurrent = prev.upload.current + 1;
+              return {
+                ...prev,
+                upload: {
+                  ...prev.upload,
+                  current: newUploadCurrent,
+                  processedBytes: totalUploadedBytes,
+                  uploadSpeed: speed,
+                  estimatedTimeRemaining: estimatedTimeRemaining,
+                  // Update percentage based on actual progress
+                  totalBytes: totalBytes
+                },
+                currentStage: 'upload'
+              };
+            });
+            // --- END FIX ---
+            return uploadResult;
           } catch (error) {
+            // --- FIX: Also update speed/time on error for consistency ---
+            const now = Date.now();
+            const elapsed = (now - uploadStartTime) / 1000;
+            const speed = totalUploadedBytes / (elapsed || 1);
+            const remainingBytes = totalBytes - totalUploadedBytes;
+            const estimatedTimeRemaining = speed > 0 ? remainingBytes / speed : 0;
+            setDualProgress(prev => prev && {
+              ...prev,
+              upload: {
+                ...prev.upload,
+                current: prev.upload.current + 1,
+                processedBytes: prev.upload.processedBytes + size,
+                uploadSpeed: speed,
+                estimatedTimeRemaining: estimatedTimeRemaining
+              },
+              currentStage: 'upload'
+            });
+            // --- END FIX ---
             console.error('Error uploading file:', file.name, error);
+            return null;
           }
-        }
-
-        // 3. Index faces for this batch
+        }));
+        // 3. Index faces for this batch (unchanged)
         try {
-          const imageKeys = allUploadedUrls
-            .slice(-compressedFiles.length) // Get keys for current batch
+          const imageKeys = uploadResults
             .filter((url): url is string => !!url)
             .map(url => {
               const urlObj = new URL(url);
               return decodeURIComponent(urlObj.pathname.substring(1));
             });
-
           if (imageKeys.length > 0) {
             await indexFacesBatch(selectedEvent, imageKeys);
           }
         } catch (indexError) {
           console.error('Error during face indexing for batch:', indexError);
         }
-
-        // Clear memory after each batch
-        compressedFiles.length = 0;
         if (global.gc) {
           global.gc();
         }
+      }
+      // After all uploads, update the backend with original and compressed sizes
+      try {
+        await fetch('/api/events/update-image-sizes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            eventId: selectedEvent,
+            originalBytes: totalOriginalBytes,
+            compressedBytes: totalCompressedBytes
+          })
+        });
+      } catch (err) {
+        console.error('Failed to update backend with image sizes:', err);
       }
 
       // Update the event data in DynamoDB
@@ -1189,16 +1354,37 @@ const UploadImage = () => {
       if (userEmail) {
         const updatedEvent = await getEventById(selectedEvent);
         if (updatedEvent) {
-          const totalOriginalSize = (updatedEvent.totalImageSize || 0) + totalBytes;
-          const totalCompressedSize = (updatedEvent.totalCompressedSize || 0) + totalCompressedBytes;
-          
-          const originalSize = convertToAppropriateUnit(totalOriginalSize);
-          const compressedSize = convertToAppropriateUnit(totalCompressedSize);
-          
+          // Calculate previous totalImageSize in bytes
+          const prevImageSize = updatedEvent.totalImageSize || 0;
+          const prevImageUnit = updatedEvent.totalImageSizeUnit || 'MB';
+          const prevImageBytes = prevImageUnit === 'GB' ? prevImageSize * 1024 * 1024 * 1024 : prevImageSize * 1024 * 1024;
+          // Calculate previous totalCompressedSize in bytes
+          const prevCompressed = updatedEvent.totalCompressedSize || 0;
+          const prevCompressedUnit = updatedEvent.totalCompressedSizeUnit || 'MB';
+          const prevCompressedBytes = prevCompressedUnit === 'GB' ? prevCompressed * 1024 * 1024 * 1024 : prevCompressed * 1024 * 1024;
+          // Add this session's upload sizes (only uniqueImages, not all images)
+          const uploadedOriginalBytes = uniqueImages.reduce((sum, f) => sum + f.size, 0);
+          const totalImageBytes = prevImageBytes + uploadedOriginalBytes;
+          const totalCompressedBytesFinal = prevCompressedBytes + totalCompressedBytes;
+          // Convert to appropriate units
+          const imageSize = convertToAppropriateUnit(totalImageBytes);
+          const compressedSize = convertToAppropriateUnit(totalCompressedBytesFinal);
+          // Debug log
+          console.log('[DB UPDATE]', {
+            photoCount: (updatedEvent.photoCount || 0) + allUploadedUrls.length,
+            totalImageSize: imageSize.size,
+            totalImageSizeUnit: imageSize.unit,
+            totalCompressedSize: compressedSize.size,
+            totalCompressedSizeUnit: compressedSize.unit,
+            uploadedOriginalBytes,
+            totalCompressedBytes,
+            prevImageBytes,
+            prevCompressedBytes
+          });
           await updateEventData(selectedEvent, userEmail, {
             photoCount: (updatedEvent.photoCount || 0) + allUploadedUrls.length,
-            totalImageSize: originalSize.size,
-            totalImageSizeUnit: originalSize.unit,
+            totalImageSize: imageSize.size,
+            totalImageSizeUnit: imageSize.unit,
             totalCompressedSize: compressedSize.size,
             totalCompressedSizeUnit: compressedSize.unit
           });
@@ -1206,11 +1392,29 @@ const UploadImage = () => {
       }
 
       // Mark upload as complete
+      setDualProgress(null); // Hide progress bar immediately after upload
+      setIsUploading(false); // Mark upload as not in progress
       setUploadSuccess(true);
-      setShowQRModal(true);
       setImages([]);
       setTotalSize(0);
       setUploadedUrls(allUploadedUrls);
+      setShowQRModal(true); // Show QR modal after progress bar is hidden
+
+      // Update DynamoDB with new image count
+      // await fetch('http://localhost:3001/events/update-image-sizes', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify({
+      //     eventId: selectedEvent,
+      //     photoCount: allUploadedUrls.length,
+      //     // Add any other fields you want to update (e.g. totalImageSize, compressedSize, etc.)
+      //   })
+      // });
+      // await fetch('http://localhost:3001/events/post-upload-process', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify({ eventId: selectedEvent })
+      // });
 
     } catch (error: unknown) {
       console.error('Error during upload:', error);
@@ -1220,7 +1424,7 @@ const UploadImage = () => {
       setIsUploading(false);
       setDualProgress(null);
     }
-  }, [images, selectedEvent]);
+  }, [images, selectedEvent, branding, logoUrl]);
 
   const handleDownload = useCallback(async (url: string) => {
     try {
@@ -1361,6 +1565,371 @@ const UploadImage = () => {
     }
   }, [selectedEvent, checkAuthorization]);
 
+  const handleGoogleLink = useCallback(async () => {
+    if (!driveLink) {
+      setPopup({ type: 'warning', message: 'Please enter your Google Drive link.' });
+      return;
+    }
+    if (!selectedEvent) {
+      setPopup({ type: 'warning', message: 'Please select or create an event before uploading images.' });
+      return;
+    }
+    setIsDriveUploading(true);
+    setDriveUploadProgress(0);
+    setDriveFillProgress(0);
+    setDriveUploadResult('idle');
+    setDualProgress(null);
+    if (driveProgressTimeout.current) clearTimeout(driveProgressTimeout.current);
+    if (updatingIntervalRef.current) clearInterval(updatingIntervalRef.current);
+    if (fillIntervalRef.current) clearInterval(fillIntervalRef.current);
+    setUpdatingDots('');
+    // Start animated dots
+    updatingIntervalRef.current = setInterval(() => {
+      setUpdatingDots(prev => prev.length < 3 ? prev + '.' : '');
+    }, 500);
+    // Start blue fill animation (10% per second up to 75%)
+    let fill = 0;
+    fillIntervalRef.current = setInterval(() => {
+      setDriveFillProgress(prev => {
+        if (prev < 75) {
+          fill = Math.min(prev + 10, 75);
+          return fill;
+        } else {
+          clearInterval(fillIntervalRef.current!);
+          return prev;
+        }
+      });
+    }, 1000); // 10% per second
+    try {
+      // 1. Get the list of image URLs from the backend (do not upload yet)
+      const response = await fetch('http://localhost:3001/drive-list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          driveLink,
+          eventId: selectedEvent,
+          onlyList: true
+        })
+      });
+      if (!response.ok) throw new Error('Failed to get images from Google Drive.');
+      const result = await response.json(); // [{name, url}]
+      if (!Array.isArray(result) || result.length === 0) {
+        setPopup({ type: 'warning', message: 'No images were found in the provided Drive folder.' });
+        setIsDriveUploading(false);
+        setDriveUploadResult('error');
+        setDriveFillProgress(100);
+        driveProgressTimeout.current = setTimeout(() => {
+          setDriveUploadResult('idle');
+          setDriveFillProgress(0);
+        }, 3000);
+        return;
+      }
+      // 2. Prepare for progress tracking
+      const totalCount = result.length;
+      let totalOriginalBytes = 0;
+      let totalCompressedBytes = 0;
+      let totalUploadedBytes = 0;
+      let totalUploadedCount = 0;
+      const allUploadedUrls: string[] = [];
+      setDualProgress({
+        optimization: {
+          current: 0,
+          total: totalCount,
+          processedBytes: 0,
+          totalBytes: 0,
+          estimatedTimeRemaining: 0
+        },
+        upload: {
+          current: 0,
+          total: totalCount,
+          processedBytes: 0,
+          totalBytes: 0,
+          uploadSpeed: 0,
+          estimatedTimeRemaining: 0
+        },
+        currentStage: 'optimization'
+      });
+      // 3. For each image, download, watermark, and upload (batching for large sets)
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < result.length; i += BATCH_SIZE) {
+        const batch = result.slice(i, i + BATCH_SIZE);
+        // Get branding and logo for this batch
+        const brandingFromStorage = localStorage.getItem('branding');
+        const currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
+        // Download, watermark, and upload in parallel
+        const compressResults = await Promise.all(batch.map(async (fileObj) => {
+          try {
+            // Download image as blob via backend proxy
+            const proxyUrl = `http://localhost:3001/proxy-drive-image?url=${encodeURIComponent(fileObj.url)}`;
+            const imgResp = await fetch(proxyUrl);
+            if (!imgResp.ok) throw new Error('Failed to download image from Drive (proxy).');
+            const blob = await imgResp.blob();
+            totalOriginalBytes += blob.size;
+            // Convert to File
+            const file = new File([blob], fileObj.name, { type: blob.type });
+            const jpgFile = await convertToJpg(file);
+            // Watermark
+            const watermarkedBlob = await compressImage(jpgFile, 0.8, currentBranding, logoUrl);
+            totalCompressedBytes += watermarkedBlob.size;
+            const watermarkedFile = new File([watermarkedBlob], fileObj.name, { type: 'image/jpeg' });
+            return { file: watermarkedFile, size: watermarkedBlob.size, name: fileObj.name };
+          } catch (err) {
+            console.error('[Drive Upload] Error processing file:', fileObj.name, err);
+            return null;
+          }
+        }));
+        // Upload all compressed files in the batch in parallel
+        const uploadResults = await Promise.all(compressResults.map(async (res) => {
+          if (!res) return null;
+          try {
+            const uploadResult = await uploadToS3WithRetry(res.file, res.name);
+            allUploadedUrls.push(uploadResult);
+            totalUploadedBytes += res.size;
+            totalUploadedCount++;
+            return uploadResult;
+          } catch (error) {
+            console.error('[Drive Upload] Error uploading file:', res.name, error);
+            return null;
+          }
+        }));
+        // Update progress
+        setDualProgress(prev => prev && {
+          ...prev,
+          optimization: {
+            ...prev.optimization,
+            current: Math.min(prev.optimization.current + batch.length, totalCount),
+            processedBytes: totalOriginalBytes,
+            totalBytes: totalOriginalBytes + (prev.optimization.totalBytes - prev.optimization.processedBytes)
+          },
+          upload: {
+            ...prev.upload,
+            current: Math.min(prev.upload.current + batch.length, totalCount),
+            processedBytes: totalUploadedBytes,
+            totalBytes: totalCompressedBytes + (prev.upload.totalBytes - prev.upload.processedBytes)
+          },
+          currentStage: 'upload'
+        });
+      }
+      setUploadedUrls(allUploadedUrls);
+      setGoogleDriveLink('');
+      setUploadSuccess(true);
+      setShowQRModal(true); // QR modal shows immediately after upload
+      setIsDriveUploading(false); // Re-enable the button immediately after QR modal is shown
+      setDriveFillProgress(100); // Instantly fill the progress bar
+      setPopup({
+        type: 'success',
+        message: 'Upload success!'
+      });
+      setDriveUploadResult('success');
+      setDriveUploadProgress(100);
+      // Animate blue fill from 0% to 75% at 1% per 10ms, then pause
+      setDriveFillProgress(0);
+      let fill = 0;
+      const fillInterval = setInterval(() => {
+        fill += 1;
+        setDriveFillProgress(fill);
+        if (fill >= 75) {
+          clearInterval(fillInterval);
+        }
+      }, 10); // 10ms per 1% for demo, adjust as needed
+      setDualProgress(null);
+
+      // Instead of instantly setting fill to 100, animate it smoothly from current value to 100% over 0.5s
+      const animateFillTo100 = () => {
+        const start = driveFillProgress;
+        const end = 100;
+        const duration = 500; // ms
+        const startTime = Date.now();
+        function animate() {
+          const now = Date.now();
+          const elapsed = now - startTime;
+          const progress = Math.min(1, elapsed / duration);
+          const value = Math.round(start + (end - start) * progress);
+          setDriveFillProgress(value);
+          if (progress < 1) {
+            requestAnimationFrame(animate);
+          }
+        }
+        animate();
+      };
+      animateFillTo100();
+      setUpdatingDots('');
+      // Show 'Success' for 3 seconds, then reset
+      setTimeout(() => {
+        setDriveUploadResult('idle');
+        setDriveFillProgress(100);
+        setUpdatingDots('');
+        // Do not reset driveFillProgress to 0 here
+      }, 3000);
+
+      // Trigger DB update after all uploads from Drive
+      try {
+        await fetch('http://localhost:3001/events/post-upload-process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventId: selectedEvent })
+        });
+      } catch (err) {
+        console.error('Failed to update DB after Drive upload:', err);
+      }
+    } catch (err: any) {
+      setPopup({ type: 'error', message: 'Error uploading from Google Drive: ' + (err.message || err) });
+      setDriveUploadResult('error');
+      setDriveFillProgress(100);
+      setDualProgress(null);
+      driveProgressTimeout.current = setTimeout(() => {
+        setDriveUploadResult('idle');
+        setDriveFillProgress(0);
+      }, 3000);
+    } finally {
+      setIsDriveUploading(false);
+    }
+    if (updatingIntervalRef.current) clearInterval(updatingIntervalRef.current);
+    if (fillIntervalRef.current) clearInterval(fillIntervalRef.current);
+    setUpdatingDots('');
+    setDriveFillProgress(100); // Instantly fill to 100% blue
+    setDriveUploadResult('idle'); // Reset to initial state
+  }, [driveLink, selectedEvent, driveFillProgress, logoUrl]);
+
+  useEffect(() => {
+    const fetchBranding = async () => {
+      const userEmail = localStorage.getItem('userEmail');
+      if (!userEmail) return;
+      const userProfileStr = localStorage.getItem('userProfile');
+      let brandingValue = false;
+      let logoUrlValue = null;
+      // Try to get branding from localStorage first
+      const brandingFromStorage = localStorage.getItem('branding');
+      if (brandingFromStorage) {
+        try {
+          brandingValue = JSON.parse(brandingFromStorage);
+        } catch (e) {
+          console.error('Error parsing branding from localStorage:', e);
+        }
+      }
+      // If no branding in localStorage, fetch from database
+      if (brandingValue === null || brandingValue === undefined) {
+        const user = await queryUserByEmail(userEmail);
+        brandingValue = !!user?.branding;
+        localStorage.setItem('branding', JSON.stringify(brandingValue));
+        if (userProfileStr) {
+          try {
+            const userProfile = JSON.parse(userProfileStr);
+            userProfile.branding = brandingValue;
+            localStorage.setItem('userProfile', JSON.stringify(userProfile));
+          } catch (e) {
+            console.error('Error updating userProfile in localStorage:', e);
+          }
+        }
+      }
+      setBranding(brandingValue);
+      // --- LOGO FETCHING LOGIC ---
+      if (brandingValue) {
+        let logoUrlFromProfile = null;
+        let logoFilename = null;
+        if (userProfileStr) {
+          try {
+            const userProfile = JSON.parse(userProfileStr);
+            if (userProfile.organizationLogo) {
+              // If it's a full URL, use it directly
+              if (userProfile.organizationLogo.startsWith('http')) {
+                logoUrlFromProfile = userProfile.organizationLogo;
+                console.log('[Branding] Using logo from userProfile (full URL):', logoUrlFromProfile);
+              } else {
+                // If it's just a filename, construct the S3 URL
+                logoFilename = userProfile.organizationLogo.split('/').pop();
+                if (logoFilename) {
+                  logoUrlFromProfile = `https://chitral-ai.s3.amazonaws.com/users/${userEmail}/logo/${logoFilename}`;
+                  console.log('[Branding] Constructed logo URL from filename in userProfile:', logoUrlFromProfile);
+                }
+              }
+            }
+          } catch (e) {
+            console.error('[Branding] Error parsing userProfile:', e);
+          }
+        }
+        if (logoUrlFromProfile) {
+          logoUrlValue = logoUrlFromProfile;
+        } else {
+          // Fallback: list S3 directory and use the first file
+          try {
+            const { bucketName } = await validateEnvVariables();
+            const s3Client = await s3ClientPromise;
+            const listCommand = new ListObjectsV2Command({
+              Bucket: bucketName,
+              Prefix: `users/${userEmail}/logo/`
+            });
+            const listedObjects = await s3Client.send(listCommand);
+            const files = (listedObjects.Contents || []).filter(obj => obj.Key && !obj.Key.endsWith('/'));
+            if (files.length > 0) {
+              const logoKey = files[0].Key;
+              logoUrlValue = `https://${bucketName}.s3.amazonaws.com/${logoKey}`;
+              console.log('[Branding] Fallback: Using first file in S3 logo directory:', logoUrlValue);
+            } else {
+              console.warn('[Branding] No logo file found in S3 logo directory for user:', userEmail);
+            }
+          } catch (error) {
+            console.error('[Branding] Error searching S3 for logo:', error);
+          }
+        }
+      } else {
+        console.log('[Branding] Branding is disabled, not fetching logo');
+      }
+      setLogoUrl(logoUrlValue);
+      console.log('[Branding] Fetched branding status:', {
+        branding: brandingValue,
+        logoUrl: logoUrlValue,
+        userEmail
+      });
+    };
+    fetchBranding();
+  }, []);
+
+  // Listen for branding changes in localStorage
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'branding' && e.newValue !== null) {
+        try {
+          const newBrandingValue = JSON.parse(e.newValue);
+          setBranding(newBrandingValue);
+          console.log('[Branding] Updated from localStorage change:', newBrandingValue);
+        } catch (error) {
+          console.error('Error parsing branding from storage event:', error);
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // Add an effect to clear the progress bar and interval when QR modal appears
+  useEffect(() => {
+    if (showQRModal) {
+      setDriveFillProgress(0);
+      if (fillIntervalRef.current) {
+        clearInterval(fillIntervalRef.current);
+      }
+    }
+  }, [showQRModal]);
+
+  // Add a useEffect to animate driveFillProgress by 3% per second up to 79% only when uploading and QR modal is not shown
+  useEffect(() => {
+    if (isDriveUploading && !showQRModal) {
+      setDriveFillProgress(0); // Reset at start
+      const interval = setInterval(() => {
+        setDriveFillProgress(prev => {
+          if (prev >= 79) {
+            clearInterval(interval);
+            return 79;
+          }
+          return Math.min(prev + 3, 79);
+        });
+      }, 1000); // 3% per second
+      return () => clearInterval(interval);
+    }
+  }, [isDriveUploading, showQRModal]);
+
   return (
     <div className="relative bg-grey-100 min-h-screen">
       {/* Add spacer div to push content below navbar */}
@@ -1418,60 +1987,127 @@ const UploadImage = () => {
                   Access
                 </button>
               </div>
-
-              {/* Upload type selector */}
+              {/* Drive access note */}
+              {/* Upload type selector - now with Drive button */}
               <div className="flex justify-center space-x-4 w-full max-w-md mb-4">
                 <button
                   onClick={() => setUploadType('photos')}
-                  className={`px-4 py-2 rounded-lg ${uploadType === 'photos' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200`}
+                  className={`px-4 py-2 rounded-lg ${uploadType === 'photos' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200 font-semibold border-2 ${uploadType === 'photos' ? 'border-blue-700' : 'border-gray-300'}`}
                 >
                   Photos
                 </button>
                 <button
                   onClick={() => setUploadType('folder')}
-                  className={`px-4 py-2 rounded-lg ${uploadType === 'folder' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200`}
+                  className={`px-4 py-2 rounded-lg ${uploadType === 'folder' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200 font-semibold border-2 ${uploadType === 'folder' ? 'border-blue-700' : 'border-gray-300'}`}
                 >
                   Folder
                 </button>
+                <button
+                  onClick={() => setUploadType('drive')}
+                  className={`px-4 py-2 rounded-lg ${uploadType === 'drive' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200 font-semibold border-2 ${uploadType === 'drive' ? 'border-blue-700' : 'border-gray-300'}`}
+                >
+                  Drive
+                </button>
               </div>
 
-              {/* Drag and drop zone */}
-              <div
-                className={`w-full max-w-md border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  multiple
-                  accept="image/*,.heic,.heif,.raw,.cr2,.nef,.arw,.orf,.dng,.rw2,.pef,.srw,.psd,.ai,.eps,.indd,.sketch,.fig,.tga,.pcx,.xcf,.kra,.cdr,.afphoto,.afdesign"
-                  onChange={handleImageChange}
-                  className="hidden"
-                  {...(uploadType === 'folder' ? { webkitdirectory: '', directory: '' } : {})}
-                />
-                <div className="space-y-4">
-                  <div className="flex justify-center">
-                    <UploadIcon className={`w-12 h-12 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
+              {/* Drive upload UI, only show if Drive is selected */}
+              {uploadType === 'drive' && (
+                <>
+                  {/* Drive upload progress bar above the note, never below the button, and disappears immediately on QR modal */}
+                  {(isDriveUploading && !showQRModal) && (
+                    <div className="w-full max-w-md mx-auto mb-2">
+                      <div className="relative h-4 bg-blue-200 rounded-full overflow-hidden flex items-center">
+                        <div
+                          className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                          style={{ width: `${driveFillProgress}%`, transition: 'width 0.2s linear' }}
+                        />
+                        {/* Centered spinner and percentage */}
+                        <span className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 select-none" style={{zIndex:2}}>
+                          <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="4" opacity="0.2" />
+                            <path d="M22 12a10 10 0 0 1-10 10" stroke="#fff" strokeWidth="4" strokeLinecap="round" />
+                          </svg>
+                          <span className="text-xs text-white font-semibold">{Math.round(driveFillProgress)}%</span>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="w-full max-w-md mb-1">
+                    <div className="bg-blue-100 border-l-4 border-blue-500 text-blue-900 p-2 rounded text-sm flex items-center gap-2 shadow-sm">
+                      <AlertCircle className="w-4 h-4 text-blue-600" />
+                      <span>
+                        <b>Note:</b> Please ensure your Google Drive folder or file is set to <b>"Anyone with the link can view"</b> before uploading. Otherwise, images cannot be accessed.
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-lg font-medium text-gray-700">
-                      {isDragging ? 'Drop your files here' : 'Drag and drop your files here'}
-                    </p>
-                    <p className="mt-1 text-sm text-gray-500">
-                      or
-                    </p>
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="mt-2 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    >
-                      {uploadType === 'folder' ? 'Select Folder' : 'Select Photos'}
-                    </button>
+                  <div className="flex flex-col sm:flex-row w-full max-w-md space-y-2 sm:space-y-0 sm:space-x-2 mb-4">
+                    <input
+                      type="text"
+                      value={driveLink}
+                      onChange={(e) => setGoogleDriveLink(e.target.value)}
+                      placeholder="Enter Your Drive Link"
+                      className="w-full border border-blue-400 rounded-lg px-4 py-2 text-black focus:outline-none focus:border-blue-900 bg-white"
+                      disabled={isDriveUploading && !showQRModal}
+                    />
+                    <div className="w-full sm:w-auto min-w-[90px] relative" style={{height: '44px'}}>
+                      <button
+                        onClick={handleGoogleLink}
+                        disabled={isDriveUploading && !showQRModal}
+                        className="w-full h-full px-4 py-2 relative overflow-hidden rounded-lg font-medium flex items-center justify-center gap-2 border-2 bg-blue-600 text-white border-blue-600 transition-colors duration-200"
+                        style={{
+                          position: 'relative',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <span className="relative z-10 flex items-center gap-2 text-white">
+                          {isDriveUploading && !showQRModal ? 'Uploading...' : 'Upload'}
+                        </span>
+                      </button>
+                      {/* Removed the blue progress bar below the input bar */}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Drag and drop zone and file inputs, only show if not Drive */}
+              {uploadType !== 'drive' && (
+                <div
+                  className={`w-full max-w-md border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}
+                  onDragEnter={handleDragEnter}
+                  onDragLeave={handleDragLeave}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    multiple
+                    accept="image/*,.heic,.heif,.raw,.cr2,.nef,.arw,.orf,.dng,.rw2,.pef,.srw,.psd,.ai,.eps,.indd,.sketch,.fig,.tga,.pcx,.xcf,.kra,.cdr,.afphoto,.afdesign"
+                    onChange={handleImageChange}
+                    className="hidden"
+                    {...(uploadType === 'folder' ? { webkitdirectory: '', directory: '' } : {})}
+                  />
+                  <div className="space-y-4">
+                    <div className="flex justify-center">
+                      <UploadIcon className={`w-12 h-12 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
+                    </div>
+                    <div>
+                      <p className="text-lg font-medium text-gray-700">
+                        {isDragging ? 'Drop your files here' : 'Drag and drop your files here'}
+                      </p>
+                      <p className="mt-1 text-sm text-gray-500">
+                        or
+                      </p>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="mt-2 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        {uploadType === 'folder' ? 'Select Folder' : 'Select Photos'}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Authorization status message */}
               {isAuthorized !== null && localStorage.getItem('userEmail') && (
@@ -1581,31 +2217,35 @@ const UploadImage = () => {
                     </div>
                   )}
 
-                  <button
-                    onClick={handleUpload}
-                    disabled={isUploading || images.length === 0}
-                    className={`w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                      isUploading || images.length === 0 
-                        ? 'bg-gray-400 cursor-not-allowed opacity-50' 
-                        : 'bg-blue-500 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
-                    } transition-colors duration-200`}
-                  >
-                    {isUploading ? (
-                      <span className="flex items-center justify-center">
-                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                        {dualProgress?.currentStage === 'optimization' && 'Optimizing'}
-                        {dualProgress?.currentStage === 'upload' && 'Uploading'}
-                        {' '}
-                        {dualProgress?.optimization.current}/{dualProgress?.optimization.total}
-                      </span>
-                    ) : images.length === 0 ? (
-                      'Select images to upload'
-                    ) : (
-                      `Upload ${images.length} Image${images.length > 1 ? 's' : ''}`
-                    )}
-                  </button>
+                  
 
-                  {isUploading && dualProgress && (
+                  {(uploadType === 'photos' || uploadType === 'folder') && (
+                    <button
+                      onClick={handleUpload}
+                      disabled={isUploading || images.length === 0}
+                      className={`w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                        isUploading || images.length === 0 
+                          ? 'bg-gray-400 cursor-not-allowed opacity-50' 
+                          : 'bg-blue-500 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                      } transition-colors duration-200`}
+                    >
+                      {isUploading ? (
+                        <span className="flex items-center justify-center">
+                          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                          {dualProgress?.currentStage === 'optimization' && 'Optimizing'}
+                          {dualProgress?.currentStage === 'upload' && 'Uploading'}
+                          {' '}
+                          {dualProgress?.optimization.current}/{dualProgress?.optimization.total}
+                        </span>
+                      ) : images.length === 0 ? (
+                        'Select images to upload'
+                      ) : (
+                        `Upload ${images.length} Image${images.length > 1 ? 's' : ''}`
+                      )}
+                    </button>
+                  )}
+
+                  {isUploading && dualProgress && !showQRModal && (
                     <div className="mt-4 space-y-4">
                       {/* Combined Time Estimate */}
                       <div className="text-sm text-gray-600 flex justify-between items-center">
@@ -1616,7 +2256,7 @@ const UploadImage = () => {
                             (dualProgress.upload.estimatedTimeRemaining || 0)
                           )}</span>
                         </div>
-                        {dualProgress.upload.uploadSpeed !== undefined && (
+                        {dualProgress.upload.uploadSpeed !== undefined && dualProgress.upload.uploadSpeed > 0 && (
                           <span className="text-xs">Upload speed: {formatUploadSpeed(dualProgress.upload.uploadSpeed)}</span>
                         )}
                       </div>
@@ -1625,13 +2265,13 @@ const UploadImage = () => {
                       <div className="space-y-2">
                         <div className="flex justify-between text-sm text-gray-600">
                           <span>Optimizing Images</span>
-                          <span>{Math.round((dualProgress.optimization.processedBytes / dualProgress.optimization.totalBytes) * 100)}%</span>
+                          <span>{dualProgress.optimization.totalBytes > 0 ? Math.min(100, Math.round((dualProgress.optimization.processedBytes / dualProgress.optimization.totalBytes) * 100)) : 0}%</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2.5">
                           <div 
                             className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
                             style={{ 
-                              width: `${Math.round((dualProgress.optimization.processedBytes / dualProgress.optimization.totalBytes) * 100)}%` 
+                              width: `${dualProgress.optimization.totalBytes > 0 ? Math.min(100, Math.round((dualProgress.optimization.processedBytes / dualProgress.optimization.totalBytes) * 100)) : 0}%` 
                             }}
                           />
                         </div>
@@ -1641,13 +2281,13 @@ const UploadImage = () => {
                       <div className="space-y-2">
                         <div className="flex justify-between text-sm text-gray-600">
                           <span>Uploading to Cloud</span>
-                          <span>{Math.round((dualProgress.upload.processedBytes / dualProgress.upload.totalBytes) * 100)}%</span>
+                          <span>{dualProgress.upload.total > 0 ? Math.min(100, Math.round((dualProgress.upload.current / dualProgress.upload.total) * 100)) : 0}%</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2.5">
                           <div 
                             className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
                             style={{ 
-                              width: `${Math.round((dualProgress.upload.processedBytes / dualProgress.upload.totalBytes) * 100)}%` 
+                              width: `${dualProgress.upload.total > 0 ? Math.min(100, Math.round((dualProgress.upload.current / dualProgress.upload.total) * 100)) : 0}%` 
                             }}
                           />
                         </div>
@@ -1765,95 +2405,220 @@ const UploadImage = () => {
           </div>
         </div>
       </div>
+      {popup && (
+        <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[9999]">
+          <div className={`rounded-lg shadow-lg px-6 py-4 flex items-center gap-3 text-white ${popup.type === 'success' ? 'bg-green-600' : popup.type === 'error' ? 'bg-red-600' : 'bg-yellow-500'}`}
+            style={{ minWidth: 320 }}>
+            {popup.type === 'success' && <CheckCircle className="w-6 h-6 text-white" />}
+            {popup.type === 'error' && <AlertCircle className="w-6 h-6 text-white" />}
+            {popup.type === 'warning' && <AlertCircle className="w-6 h-6 text-white" />}
+            <div className="flex-1">
+              <div className="font-semibold text-base">{popup.message}</div>
+              {popup.link && (
+                <a href={popup.link} target="_blank" rel="noopener noreferrer" className="underline text-sm text-white hover:text-blue-200 mt-1 inline-block">View Uploaded Event</a>
+              )}
+            </div>
+            <button onClick={() => setPopup(null)} className="ml-2 p-1 rounded-full bg-white bg-opacity-20 hover:bg-opacity-40 transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default UploadImage;
 
-// Remove the old convertHeicToJpeg function and replace compressImage with this:
-const compressImage = async (file: File): Promise<Blob> => {
-  if (!file) {
-    throw new Error('Invalid file for compression');
-  }
-
-  // Check for HEIC/HEIF files by both MIME type and extension
-  const fileName = file.name.toLowerCase();
-  const isHeicHeif = fileName.endsWith('.heic') || fileName.endsWith('.heif') ||
-                     file.type === 'image/heic' || file.type === 'image/heif';
-
-  if (isHeicHeif) {
-    try {
-      console.log('Converting HEIC/HEIF to JPEG:', file.name);
-      // Convert HEIC to JPEG using heic2any
-      const jpegBlob = await heic2any({
-        blob: file,
-        toType: 'image/jpeg',
-        quality: 0.8,
-      }) as Blob;
-      console.log('Successfully converted HEIC/HEIF to JPEG:', file.name);
-      return jpegBlob;
-    } catch (error) {
-      console.error('Failed to convert HEIC/HEIF image:', error);
-      throw new Error('Failed to convert HEIC/HEIF image to JPEG');
-    }
-  }
-
-  // For non-HEIC files, check if it's a valid image type
-  if (!file.type.startsWith('image/')) {
-    throw new Error('Invalid file type for compression');
-  }
-
-  // For non-HEIC files, use the standard compression
-  return new Promise<Blob>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      if (!e.target?.result) {
-        reject(new Error('Failed to read file for compression'));
-        return;
-      }
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'));
-          return;
-        }
-        let width = img.width;
-        let height = img.height;
-        const maxDimension = MAX_DIMENSION;
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = (height / width) * maxDimension;
-            width = maxDimension;
-          } else {
-            width = (width / height) * maxDimension;
-            height = maxDimension;
+// Enhanced compressImage function with improved watermark
+async function compressImage(file: File, quality = 0.8, branding = false, logoUrl: string | null = null): Promise<Blob> {
+  console.log('[compressImage] Starting compression with:', {
+    fileName: file.name,
+    fileSize: file.size,
+    branding: branding,
+    logoUrl: logoUrl,
+    quality: quality
+  });
+  
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = async () => {
+      console.log('[compressImage] Image loaded:', {
+        width: img.width,
+        height: img.height
+      });
+      
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject('No canvas context');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0, img.width, img.height);
+      
+      // Only add watermark if branding is true and logoUrl exists
+      if (branding && logoUrl) {
+        console.log('[Watermark] Branding is ON. logoUrl:', logoUrl);
+        
+        // Test if logo URL is accessible first
+        try {
+          const response = await fetch(logoUrl, { method: 'HEAD' });
+          if (!response.ok) {
+            console.error('[Watermark] Logo URL is not accessible:', logoUrl, 'Status:', response.status);
+            // Continue without watermark
+            canvas.toBlob((blob) => {
+              if (blob) {
+                console.log('[compressImage] Created blob without watermark due to inaccessible logo, size:', blob.size);
+                resolve(blob);
+              } else {
+                reject('Compression failed');
+              }
+            }, 'image/jpeg', quality);
+            return;
           }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => {
-            if (blob && blob.size > 0) {
+        } catch (error) {
+          console.error('[Watermark] Error testing logo URL accessibility:', error);
+          // Continue without watermark
+          canvas.toBlob((blob) => {
+            if (blob) {
+              console.log('[compressImage] Created blob without watermark due to logo test error, size:', blob.size);
               resolve(blob);
             } else {
-              reject(new Error('Failed to compress image - blob is null or empty'));
+              reject('Compression failed');
             }
-          },
-          'image/jpeg',
-          0.8
-        );
-      };
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = e.target?.result as string;
+          }, 'image/jpeg', quality);
+          return;
+        }
+        
+        const logoImg = new window.Image();
+        logoImg.crossOrigin = 'anonymous';
+        logoImg.onload = () => {
+          console.log('[Watermark] Logo loaded successfully, drawing on canvas.');
+          
+          // Calculate proportional watermark size based on image dimensions
+          const minDimension = Math.min(img.width, img.height);
+          const maxDimension = Math.max(img.width, img.height);
+          
+          // Define size ranges for different image sizes
+          let logoSize: number;
+          if (minDimension < 800) {
+            // Small images: 20-25% of min dimension (increased from 12-15%)
+            logoSize = Math.max(160, Math.floor(minDimension * 0.20));
+          } else if (minDimension < 1600) {
+            // Medium images: 18-22% of min dimension (increased from 10-12%)
+            logoSize = Math.max(200, Math.floor(minDimension * 0.18));
+          } else if (minDimension < 3000) {
+            // Large images: 15-20% of min dimension (increased from 8-10%)
+            logoSize = Math.max(300, Math.floor(minDimension * 0.16));
+          } else {
+            // Very large images: 12-15% of min dimension (increased from 7-9%)
+            logoSize = Math.max(400, Math.floor(minDimension * 0.14));
+          }
+          
+          // Ensure logo doesn't exceed reasonable bounds
+          logoSize = Math.min(logoSize, Math.floor(maxDimension * 0.35)); // Max 35% of max dimension (increased from 25%)
+          
+          // Calculate proportional padding based on image size
+          let padding: number;
+          if (minDimension < 800) {
+            padding = Math.max(30, Math.floor(minDimension * 0.05)); // Increased padding
+          } else if (minDimension < 1600) {
+            padding = Math.max(40, Math.floor(minDimension * 0.055));
+          } else if (minDimension < 3000) {
+            padding = Math.max(50, Math.floor(minDimension * 0.06));
+          } else {
+            padding = Math.max(60, Math.floor(minDimension * 0.065));
+          }
+          const x = padding;
+          const y = img.height - logoSize - padding;
+          
+          // Add a semi-transparent background for better visibility
+          ctx.save();
+          
+          // Remove the white background block and instead add a subtle shadow
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+          ctx.shadowBlur = 15;
+          ctx.shadowOffsetX = 2;
+          ctx.shadowOffsetY = 2;
+          
+          // Draw the logo with slightly reduced opacity for better blending
+          ctx.globalAlpha = 0.85;
+          ctx.drawImage(logoImg, x, y, logoSize, logoSize);
+          
+          // Reset the context
+          ctx.restore();
+          
+          console.log('[Watermark] Applied watermark:', {
+            logoSize,
+            position: { x, y },
+            padding,
+            imageSize: { width: img.width, height: img.height },
+            minDimension,
+            maxDimension,
+            logoUrl: logoUrl
+          });
+          
+          canvas.toBlob((blob) => {
+            if (blob) {
+              console.log('[compressImage] Successfully created blob with watermark, size:', blob.size);
+              resolve(blob);
+            } else {
+              console.error('[compressImage] Failed to create blob with watermark');
+              reject('Compression failed');
+            }
+          }, 'image/jpeg', quality);
+        };
+        logoImg.onerror = (e) => {
+          console.error('[Watermark] Logo failed to load for watermark', e, logoUrl);
+          // Fallback: no watermark
+          canvas.toBlob((blob) => {
+            if (blob) {
+              console.log('[compressImage] Created blob without watermark due to logo error, size:', blob.size);
+              resolve(blob);
+            } else {
+              console.error('[compressImage] Failed to create blob without watermark');
+              reject('Compression failed');
+            }
+          }, 'image/jpeg', quality);
+        };
+        // Prefer localStorage logo if available
+        const localLogoDataUrl = localStorage.getItem('orgLogoDataUrl');
+        if (localLogoDataUrl) {
+          logoImg.src = localLogoDataUrl;
+        } else {
+          // Always fetch the logo as a blob to avoid cache and CORS issues
+          try {
+            const logoResp = await fetch(logoUrl, { cache: 'reload' });
+            if (!logoResp.ok) throw new Error('Failed to fetch logo image for watermark');
+            const logoBlob = await logoResp.blob();
+            const logoObjectUrl = URL.createObjectURL(logoBlob);
+            logoImg.src = logoObjectUrl;
+          } catch (err) {
+            console.error('[Watermark] Failed to fetch logo as blob:', err);
+            logoImg.src = logoUrl; // fallback
+          }
+        }
+      } else {
+        if (!branding) console.log('[Watermark] Branding is OFF.');
+        if (!logoUrl) console.log('[Watermark] No logoUrl provided.');
+        // No branding or no logo: just export the image
+        canvas.toBlob((blob) => {
+          if (blob) {
+            console.log('[compressImage] Created blob without watermark, size:', blob.size);
+            resolve(blob);
+          } else {
+            console.error('[compressImage] Failed to create blob without watermark');
+            reject('Compression failed');
+          }
+        }, 'image/jpeg', quality);
+      }
     };
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
+    img.onerror = (e) => {
+      console.error('[compressImage] Failed to load image:', e);
+      reject(e);
+    };
+    img.src = URL.createObjectURL(file);
   });
-};
+}
 
 // Add uploadToS3 function before the UploadImage component
 const uploadToS3 = async (file: File, fileName: string): Promise<string> => {
@@ -1905,15 +2670,9 @@ const uploadToS3 = async (file: File, fileName: string): Promise<string> => {
 
     await upload.done();
     console.log('[DEBUG] UploadImage.tsx: Successfully uploaded:', key);
-    return `https://${bucketName}.s3.amazonaws.com/${key}`;
-  } catch (error: any) {
-    console.error('[ERROR] UploadImage.tsx: Failed to upload to S3:', {
-      error: error.message,
-      fileName,
-      eventId: localStorage.getItem('currentEventId'),
-      fileType: file.type,
-      fileSize: file.size
-    });
+    return `https://${bucketName}.s3.amazonaws.com/${key}`
+  } catch (error) {
+    console.error('Error uploading to S3:', error);
     throw error;
   }
-};
+}

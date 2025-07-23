@@ -3,7 +3,11 @@ import express from 'express';
 import AWS from 'aws-sdk';
 import cors from 'cors';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import fetch from 'node-fetch';
+import * as cheerio from 'cheerio';
+import mime from 'mime-types'; // Add this import at the top
+import sharp from 'sharp'; // Add this import for sharp
 
 const app = express();
 
@@ -252,6 +256,308 @@ app.get('/api/organizations/by-code/:organizationCode', async (req, res) => {
   }
 });
 
+// === DRIVE BACKEND ===
+// Utility function for consistent filename sanitization (copied from faceRecognition.ts)
+function sanitizeFilename(filename) {
+  // First, handle special cases like (1), (2), etc.
+  const hasNumberInParentheses = filename.match(/\(\d+\)$/);
+  const numberInParentheses = hasNumberInParentheses ? hasNumberInParentheses[0] : '';
+  // Remove the number in parentheses from the filename for sanitization
+  const filenameWithoutNumber = filename.replace(/\(\d+\)$/, '');
+  // Sanitize the main filename
+  const sanitized = filenameWithoutNumber
+    .replace(/[^a-zA-Z0-9_.\-:]/g, '_') // Replace invalid chars with underscore
+    .replace(/_{2,}/g, '_') // Replace multiple underscores with single underscore
+    .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
+  // Add back the number in parentheses if it existed
+  return sanitized + numberInParentheses;
+}
+
+const rekognition = new AWS.Rekognition({
+  region: AWS_REGION,
+  accessKeyId: AWS_ACCESS_KEY,
+  secretAccessKey: AWS_SECRET_KEY,
+});
+
+app.post('/drive-list', async (req, res) => {
+  const { driveLink, eventId, onlyList } = req.body;
+  if (!driveLink) return res.status(400).json({ error: 'Missing driveLink' });
+
+  // Check if it's a file or folder link
+  const fileMatch = driveLink.match(/file\/d\/([\w-]+)/);
+  const folderMatch = driveLink.match(/folders\/([\w-]+)/);
+
+  let fileIds = [];
+
+  if (fileMatch) {
+    // Single file link
+    fileIds = [fileMatch[1]];
+  } else if (folderMatch) {
+    // Folder link: scrape for file IDs
+    const folderId = folderMatch[1];
+    try {
+      const folderUrl = `https://drive.google.com/drive/folders/${folderId}`;
+      const html = await (await fetch(folderUrl)).text();
+      const $ = cheerio.load(html);
+      $('a').each((i, el) => {
+        const href = $(el).attr('href');
+        const match = href && href.match(/\/file\/d\/([\w-]+)/);
+        if (match) fileIds.push(match[1]);
+      });
+      // Try additional selectors if no fileIds found
+      if (fileIds.length === 0) {
+        $('[data-id]').each((i, el) => {
+          const id = $(el).attr('data-id');
+          if (id && /^[\w-]{25,}$/.test(id)) fileIds.push(id);
+        });
+      }
+      if (fileIds.length === 0) {
+        $('script').each((i, el) => {
+          const scriptText = $(el).html();
+          if (scriptText && scriptText.includes('window.viewerData')) {
+            const matches = scriptText.match(/fileId":"([\w-]{25,})"/g);
+            if (matches) {
+              matches.forEach(m => {
+                const idMatch = m.match(/fileId":"([\w-]{25,})"/);
+                if (idMatch) fileIds.push(idMatch[1]);
+              });
+            }
+          }
+        });
+      }
+      if (fileIds.length === 0) {
+        console.error('No file links found in Google Drive folder HTML.');
+        return res.status(400).json({ error: 'No image files found in the provided Google Drive folder. The folder may be empty, not public, or Google has changed their UI.' });
+      }
+    } catch (err) {
+      return res.status(500).json({ error: 'Failed to scrape folder' });
+    }
+  } else {
+    return res.status(400).json({ error: 'Invalid Google Drive link' });
+  }
+
+  fileIds = [...new Set(fileIds)];
+  if (!fileIds.length) return res.json([]);
+
+  // If onlyList is true, just return the list of direct image links for the frontend
+  if (onlyList) {
+    const files = fileIds.map(fileId => ({
+      name: `${fileId}.jpg`, // You can improve this by scraping the name if needed
+      url: `https://drive.google.com/uc?export=download&id=${fileId}`
+    }));
+    res.json(files);
+    return;
+  }
+
+  // List existing images in S3 for this event to check for duplicates
+  let existingImageNames = new Set();
+  try {
+    const listResp = await s3.listObjectsV2({
+      Bucket: S3_BUCKET,
+      Prefix: `events/shared/${eventId}/images/`
+    }).promise();
+    if (listResp.Contents) {
+      for (const obj of listResp.Contents) {
+        if (obj.Key) {
+          const name = obj.Key.split('/').pop();
+          if (name) existingImageNames.add(sanitizeFilename(name));
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error listing S3 objects for duplicate check:', err);
+  }
+
+  // === Batch download, compress, upload, and index ===
+  const BATCH_SIZE = 5;
+  const uploadResults = [];
+  let totalOriginalBytes = 0;
+  let totalCompressedBytes = 0;
+  let allS3Keys = [];
+  for (let i = 0; i < fileIds.length; i += BATCH_SIZE) {
+    const batch = fileIds.slice(i, i + BATCH_SIZE);
+    // Download and compress all images in the batch in parallel
+    const processedBatch = await Promise.all(batch.map(async (fileId) => {
+      const url = `https://drive.google.com/uc?export=download&id=${fileId}`;
+      const fileRes = await fetch(url);
+      const arrayBuffer = await fileRes.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      // Check for HTML error page (Google sometimes returns HTML if not public)
+      const isHtml = buffer.slice(0, 100).toString().includes('<html');
+      if (isHtml) {
+        console.error(`File ID ${fileId} returned HTML instead of an image. Skipping.`);
+        return null;
+      }
+      // Try to get file name from headers or fallback
+      let fileName = `${fileId}.jpg`;
+      let contentType = 'image/jpeg';
+      const disposition = fileRes.headers.get('content-disposition');
+      if (disposition) {
+        const match = disposition.match(/filename=\"(.+?)\"/);
+        if (match) fileName = match[1];
+      }
+      // Guess content type from file extension
+      const ext = fileName.split('.').pop();
+      if (ext) {
+        const guessedType = mime.lookup(ext);
+        if (guessedType) contentType = guessedType;
+      }
+      // Fallback to response header
+      const headerType = fileRes.headers.get('content-type');
+      if (headerType && headerType.startsWith('image/')) contentType = headerType;
+      // Only upload if it's a valid image type
+      if (!contentType.startsWith('image/')) {
+        console.error(`File ${fileName} is not a valid image type (${contentType}). Skipping.`);
+        return null;
+      }
+      // Sanitize the file name for S3 and duplicate check
+      let sanitizedFileName = sanitizeFilename(fileName);
+      sanitizedFileName = sanitizedFileName.replace(/\.[^/.]+$/, '.jpg');
+      if (existingImageNames.has(sanitizedFileName)) {
+        console.log(`Duplicate detected, skipping upload: ${sanitizedFileName}`);
+        return null;
+      }
+      // Compress image with sharp
+      let compressedBuffer;
+      let compressedContentType = 'image/jpeg';
+      try {
+        compressedBuffer = await sharp(buffer)
+          .resize({ width: 1024, withoutEnlargement: true })
+          .jpeg({ quality: 90 })
+          .toBuffer();
+      } catch (err) {
+        console.error(`Compression failed for ${sanitizedFileName}, skipping upload.`, err);
+        return null;
+      }
+      totalOriginalBytes += buffer.length;
+      totalCompressedBytes += compressedBuffer.length;
+      const s3Key = `events/shared/${eventId}/images/${sanitizedFileName}`;
+      await s3.putObject({
+        Bucket: S3_BUCKET,
+        Key: s3Key,
+        Body: compressedBuffer,
+        ACL: 'public-read',
+        ContentType: compressedContentType,
+      }).promise();
+      return {
+        name: sanitizedFileName,
+        s3Url: `https://${S3_BUCKET}.s3.amazonaws.com/${s3Key}`,
+        s3Key: s3Key,
+        originalSize: buffer.length,
+        compressedSize: compressedBuffer.length
+      };
+    }));
+    // Filter out skipped/nulls
+    const batchResults = processedBatch.filter(Boolean);
+    uploadResults.push(...batchResults);
+    allS3Keys.push(...batchResults.map(r => r.s3Key));
+    // Index faces for this batch
+    if (batchResults.length > 0) {
+      try {
+        // Use the already imported AWS SDK instance for Rekognition
+        await rekognition.createCollection({ CollectionId: `event-${eventId}` }).promise().catch(e => {
+          if (e.code !== 'ResourceAlreadyExistsException') throw e;
+        });
+        for (const r of batchResults) {
+          try {
+            await rekognition.indexFaces({
+              CollectionId: `event-${eventId}`,
+              Image: { S3Object: { Bucket: S3_BUCKET, Name: r.s3Key } },
+              ExternalImageId: r.name,
+              DetectionAttributes: ['ALL'],
+              MaxFaces: 10,
+              QualityFilter: 'AUTO',
+            }).promise();
+          } catch (err) {
+            console.error(`[Drive Upload] Failed to index face for: ${r.s3Key}`, err);
+          }
+        }
+      } catch (err) {
+        console.error('[Drive Upload] Error during face indexing:', err);
+      }
+    }
+  }
+  // === Update DynamoDB event metadata after upload ===
+  if (uploadResults.length > 0) {
+    try {
+      // Fetch the event
+      const getResp = await docClient.send(new GetCommand({
+        TableName: 'Events',
+        Key: { eventId: eventId } // <-- Use eventId as the key
+      }));
+      const event = getResp.Item || {};
+      // Convert to MB/GB for display
+      const bytesToMB = (bytes) => Number((bytes / (1024 * 1024)).toFixed(2));
+      const bytesToGB = (bytes) => Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
+      const convertToAppropriateUnit = (bytes) => {
+        const mb = bytesToMB(bytes);
+        if (mb >= 1024) {
+          return { size: bytesToGB(bytes), unit: 'GB' };
+        }
+        return { size: mb, unit: 'MB' };
+      };
+      // Add to existing totalImageSize (convert to bytes first if needed)
+      let prevSavedBytes = 0;
+      if (event.totalImageSizeBytes !== undefined) {
+        prevSavedBytes = event.totalImageSizeBytes;
+      }
+      const batchSavedBytes = totalOriginalBytes - totalCompressedBytes;
+      const newTotalSavedBytes = prevSavedBytes + batchSavedBytes;
+      const { size, unit } = convertToAppropriateUnit(newTotalSavedBytes);
+      // Add to existing totalCompressedSize (sum of all compressed sizes)
+      let prevCompressedBytes = 0;
+      if (event.totalCompressedSizeBytes !== undefined) {
+        prevCompressedBytes = event.totalCompressedSizeBytes;
+      } else if (event.totalCompressedSize && event.totalCompressedSizeUnit) {
+        if (event.totalCompressedSizeUnit === 'GB') {
+          prevCompressedBytes = event.totalCompressedSize * 1024 * 1024 * 1024;
+        } else {
+          prevCompressedBytes = event.totalCompressedSize * 1024 * 1024;
+        }
+      }
+      const newTotalCompressedBytes = prevCompressedBytes + totalCompressedBytes;
+      const { size: compressedSize, unit: compressedUnit } = convertToAppropriateUnit(newTotalCompressedBytes);
+      const newPhotoCount = (event.photoCount || 0) + uploadResults.length;
+      await docClient.send(new UpdateCommand({
+        TableName: 'Events',
+        Key: { eventId: eventId }, // <-- Use eventId as the key
+        UpdateExpression: 'SET photoCount = :pc, totalImageSize = :tis, totalImageSizeUnit = :unit, totalCompressedSize = :tcs, totalCompressedSizeUnit = :cunit',
+        ExpressionAttributeValues: {
+          ':pc': newPhotoCount,
+          ':tis': size,
+          ':unit': unit,
+          ':tcs': compressedSize,
+          ':cunit': compressedUnit
+        }
+      }));
+    } catch (err) {
+      console.error('Error updating DynamoDB event after Drive upload:', err);
+    }
+  }
+  res.json(uploadResults);
+});
+
+// Add this endpoint to handle image size updates (even if it's a no-op)
+app.post('/events/update-image-sizes', async (req, res) => {
+  const { eventId, photoCount } = req.body;
+  if (!eventId) return res.status(400).json({ error: 'Missing eventId' });
+
+  try {
+    const result = await docClient.send(new UpdateCommand({
+      TableName: 'Events',
+      Key: { eventId }, // <-- Use eventId as the key
+      UpdateExpression: 'SET photoCount = :pc',
+      ExpressionAttributeValues: {
+        ':pc': photoCount
+      }
+    }));
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error updating event in DynamoDB:', err);
+    res.status(500).json({ error: 'Failed to update event', details: err.message });
+  }
+});
+
 // Update the google-client-id endpoint
 app.get('/google-client-id', (req, res) => {
   console.log('[DEBUG] Google client ID endpoint called');
@@ -263,6 +569,102 @@ app.get('/google-client-id', (req, res) => {
   }
   
   res.json({ clientId: GOOGLE_CLIENT_ID });
+});
+
+app.get('/proxy-drive-image', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).send('Missing url');
+  try {
+    const driveRes = await fetch(url);
+    if (!driveRes.ok) return res.status(400).send('Failed to fetch image');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Content-Type', driveRes.headers.get('content-type') || 'image/jpeg');
+    driveRes.body.pipe(res);
+  } catch (err) {
+    res.status(500).send('Proxy error');
+  }
+});
+
+app.post('/events/post-upload-process', async (req, res) => {
+  const { eventId } = req.body;
+  if (!eventId) return res.status(400).json({ error: 'Missing eventId' });
+
+  try {
+    // 1. List all images in S3 for this event
+    const listResp = await s3.listObjectsV2({
+      Bucket: S3_BUCKET,
+      Prefix: `events/shared/${eventId}/images/`
+    }).promise();
+
+    const imageObjs = (listResp.Contents || []).filter(obj => obj.Key && !obj.Key.endsWith('/'));
+    const photoCount = imageObjs.length;
+    const totalImageSizeBytes = imageObjs.reduce((sum, obj) => sum + (obj.Size || 0), 0);
+
+    // If you want to estimate compressed size, you can use the same as totalImageSizeBytes,
+    // or if you have a way to distinguish, calculate separately.
+    const totalCompressedSizeBytes = totalImageSizeBytes;
+
+    // Convert to MB/GB for display
+    const bytesToMB = (bytes) => Number((bytes / (1024 * 1024)).toFixed(2));
+    const bytesToGB = (bytes) => Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
+    const convertToAppropriateUnit = (bytes) => {
+      const mb = bytesToMB(bytes);
+      if (mb >= 1024) {
+        return { size: bytesToGB(bytes), unit: 'GB' };
+      }
+      return { size: mb, unit: 'MB' };
+    };
+
+    const { size: totalImageSize, unit: totalImageSizeUnit } = convertToAppropriateUnit(totalImageSizeBytes);
+    const { size: totalCompressedSize, unit: totalCompressedSizeUnit } = convertToAppropriateUnit(totalCompressedSizeBytes);
+
+    // 2. Update DynamoDB with all fields
+    const updateResult = await docClient.send(new UpdateCommand({
+      TableName: 'Events',
+      Key: { eventId },
+      UpdateExpression: 'SET photoCount = :pc, totalImageSize = :tis, totalImageSizeUnit = :tisUnit, totalCompressedSize = :tcs, totalCompressedSizeUnit = :tcsUnit',
+      ExpressionAttributeValues: {
+        ':pc': photoCount,
+        ':tis': totalImageSize,
+        ':tisUnit': totalImageSizeUnit,
+        ':tcs': totalCompressedSize,
+        ':tcsUnit': totalCompressedSizeUnit
+      }
+    }));
+
+    // 3. (Optional) Rekognition indexing as before
+    await rekognition.createCollection({ CollectionId: `event-${eventId}` }).promise().catch(e => {
+      if (e.code !== 'ResourceAlreadyExistsException') throw e;
+    });
+    for (const obj of imageObjs) {
+      const key = obj.Key;
+      try {
+        await rekognition.indexFaces({
+          CollectionId: `event-${eventId}`,
+          Image: { S3Object: { Bucket: S3_BUCKET, Name: key } },
+          ExternalImageId: key.split('/').pop(),
+          DetectionAttributes: ['ALL'],
+          MaxFaces: 10,
+          QualityFilter: 'AUTO',
+        }).promise();
+      } catch (err) {
+        console.error(`[Drive Upload] Failed to index face for: ${key}`, err);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      photoCount,
+      totalImageSize,
+      totalImageSizeUnit,
+      totalCompressedSize,
+      totalCompressedSizeUnit,
+      updateResult
+    });
+  } catch (err) {
+    console.error('Error in post-upload process:', err);
+    res.status(500).json({ error: 'Failed post-upload process', details: err.message });
+  }
 });
 
 // Error handling middleware

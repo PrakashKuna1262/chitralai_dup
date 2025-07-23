@@ -388,6 +388,10 @@ const EventPhotos: React.FC = () => {
     }
   };
 
+  const handleBackToEvents = () => {
+    navigate('/my-organizations');
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -459,11 +463,11 @@ const EventPhotos: React.FC = () => {
       )}
       <div className="max-w-7xl mx-auto">
         <button
-          onClick={() => navigate('/attendee-dashboard')}
+          onClick={handleBackToEvents}
           className="flex items-center text-blue-600 hover:text-blue-800 transition-colors mb-2"
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to Dashboard
+          Back to Events
         </button>
         
         {loading ? (
@@ -473,13 +477,13 @@ const EventPhotos: React.FC = () => {
           </div>
         ) : (
           <>
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-1">
+            <div className="flex flex-row justify-between items-center mb-8 gap-2">
+              <div className="flex-1 flex flex-col md:block items-start">
+                <h1 className="text-base md:text-3xl font-bold text-gray-900 mb-1 text-left">
                   {event?.eventName || 'Event Photos'}
                 </h1>
                 {event && (
-                  <p className="text-gray-600">
+                  <p className="text-xs md:text-base text-gray-600 text-left">
                     {new Date(event.eventDate).toLocaleDateString(undefined, {
                       weekday: 'long',
                       year: 'numeric',
@@ -489,20 +493,18 @@ const EventPhotos: React.FC = () => {
                   </p>
                 )}
               </div>
-              
-              {images.length > 0 && (
-                <button
-                  onClick={handleDownloadAll}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors mt-4 md:mt-0 flex items-center"
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  Download All Photos
-                </button>
-              )}
+              <button
+                onClick={handleDownloadAll}
+                className="flex-shrink-0 flex items-center justify-center px-3 py-2 md:px-4 md:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm md:text-base"
+                disabled={images.length === 0}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download All
+              </button>
             </div>
 
             {images.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="grid grid-cols-3 md:grid-cols-3 lg:grid-cols-6 gap-1.5">
                 {images.map((image) => (
                   <div
                     key={image.imageId}
@@ -552,71 +554,62 @@ const EventPhotos: React.FC = () => {
                   toggleHeaderFooter(true);
                 }}
               >
-                <div className="relative bg-white rounded-lg shadow-xl max-w-[800px] max-h-[600px] w-full mx-auto" onClick={e => e.stopPropagation()}>
+                <div className="relative flex items-center justify-center bg-black rounded-2xl shadow-xl overflow-hidden max-w-[800px] max-h-[600px] w-full mx-auto" onClick={e => e.stopPropagation()}>
                   <img
                     src={selectedImage.imageUrl}
                     alt={`Enlarged photo from ${selectedImage.eventName}`}
                     className="w-full h-full object-contain rounded-lg"
                     style={{ maxHeight: 'calc(600px - 4rem)' }}
                   />
-                  
                   {/* Close button */}
                   <button
-                    className="absolute top-4 right-4 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    className="absolute top-4 right-4 p-2 sm:p-3 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
                     onClick={() => {
                       setSelectedImage(null);
                       toggleHeaderFooter(true);
                     }}
                   >
-                    <X className="w-8 h-8" />
+                    <X className="w-5 h-5 sm:w-8 sm:h-8" />
                   </button>
-                  
                   {/* Navigation arrows */}
                   {images.length > 1 && (
                     <>
-                      {/* Previous button */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           goToPreviousImage();
                         }}
-                        className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                        className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 sm:p-3 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
                         title="Previous image (←)"
                       >
-                        <ChevronLeft className="w-8 h-8" />
+                        <ChevronLeft className="w-5 h-5 sm:w-8 sm:h-8" />
                       </button>
-                      
-                      {/* Next button */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           goToNextImage();
                         }}
-                        className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                        className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 sm:p-3 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
                         title="Next image (→)"
                       >
-                        <ChevronRight className="w-8 h-8" />
+                        <ChevronRight className="w-5 h-5 sm:w-8 sm:h-8" />
                       </button>
                     </>
                   )}
-                  
                   {/* Image counter */}
                   {images.length > 1 && (
-                    <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/20 text-white text-sm">
+                    <div className="absolute top-4 left-4 px-3 py-1 sm:px-4 sm:py-2 rounded-full bg-black/20 text-white text-xs sm:text-sm">
                       {getCurrentImageIndex() + 1} / {images.length}
                     </div>
                   )}
-                  
-                  <div className="absolute bottom-4 right-4 flex space-x-2">
+                  <div className="absolute bottom-4 right-4 flex space-x-3 sm:space-x-6">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         const rect = e.currentTarget.getBoundingClientRect();
-                        // Try native sharing first
                         if (typeof navigator.share === 'function') {
                           handleShare('', selectedImage.imageUrl, e);
                         } else {
-                          // Fall back to custom share menu
                           setShareMenu({
                             isOpen: true,
                             imageUrl: selectedImage.imageUrl,
@@ -627,18 +620,18 @@ const EventPhotos: React.FC = () => {
                           });
                         }
                       }}
-                      className="p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
+                      className="p-2 sm:p-3 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
                     >
-                      <Share2 className="w-6 h-6" />
+                      <Share2 className="w-5 h-5 sm:w-6 sm:h-6" />
                     </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDownload(selectedImage.imageUrl);
                       }}
-                      className="p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
+                      className="p-2 sm:p-3 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
                     >
-                      <Download className="w-6 h-6" />
+                      <Download className="w-5 h-5 sm:w-6 sm:h-6" />
                     </button>
                   </div>
                 </div>

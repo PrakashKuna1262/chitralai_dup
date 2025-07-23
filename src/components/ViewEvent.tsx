@@ -3,12 +3,10 @@ import { ListObjectsV2Command, DeleteObjectCommand, GetObjectCommand } from '@aw
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-
-import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, ChevronLeft, ChevronRight, RotateCw, Share2, CheckCircle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-
 import { Link, useNavigate } from 'react-router-dom';
-import { getEventById, updateEventData } from '../config/eventStorage';
+import { getEventById, updateEventData, convertToAppropriateUnit } from '../config/eventStorage';
 import ProgressiveImage from './ProgressiveImage';
 
 interface ViewEventProps {
@@ -125,8 +123,25 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [imagesPerPage] = useState(20);
+  const [totalImages, setTotalImages] = useState<EventImage[]>([]);
+  const [hasMoreImages, setHasMoreImages] = useState(true);
+
+  // Add rotation state at the top of the component
+  const [rotation, setRotation] = useState(0);
+  // Add state at the top of the component
+  const [showCopyEventId, setShowCopyEventId] = useState(false);
+  const [showCopyUpload, setShowCopyUpload] = useState(false);
+  const [showCopiedIndex, setShowCopiedIndex] = useState<string | null>(null);
 
   const qrCodeRef = useRef<SVGSVGElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  // Reset rotation when image changes or modal closes
+  useEffect(() => {
+    setRotation(0);
+  }, [selectedImage]);
 
   // Toggle header and footer visibility when image is clicked
   const toggleHeaderFooter = (visible: boolean) => {
@@ -166,7 +181,11 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
   }, [eventId, navigate]);
 
   useEffect(() => {
-    fetchEventImages();
+    setCurrentPage(1);
+    setImages([]);
+    setTotalImages([]);
+    setHasMoreImages(true);
+    fetchEventImages(1, false);
     if (selectedEvent && onEventSelect) {
       onEventSelect(selectedEvent);
     }
@@ -186,9 +205,32 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     checkEventCreator();
   }, [eventId]);
 
-  const fetchEventImages = async () => {
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const target = entries[0];
+        if (target.isIntersecting && hasMoreImages && !loading) {
+          const nextPage = currentPage + 1;
+          setCurrentPage(nextPage);
+          fetchEventImages(nextPage, true);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [hasMoreImages, loading, currentPage]);
+
+  const fetchEventImages = async (page: number = 1, append: boolean = false) => {
     try {
-      setLoading(true);
+      if (!append) {
+        setLoading(true);
+      }
       const eventToUse = selectedEvent || eventId;
       const prefixes = [`events/shared/${eventToUse}/images`];
       let allImages: EventImage[] = [];
@@ -212,13 +254,32 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
           }
         } catch (error) {
           console.error(`Error fetching from path ${prefix}:`, error);
-          continue;
         }
       }
 
       if (allImages.length > 0) {
         const deduplicatedImages = deduplicateImages(allImages);
-        setImages(deduplicatedImages);
+        if (!append) {
+          setTotalImages(deduplicatedImages);
+          const firstPageImages = deduplicatedImages.slice(0, imagesPerPage);
+          setImages(firstPageImages);
+          setHasMoreImages(deduplicatedImages.length > imagesPerPage);
+        } else {
+          const startIndex = images.length;
+          const endIndex = startIndex + imagesPerPage;
+          const nextPageImages = deduplicatedImages.slice(startIndex, endIndex);
+          // Only append if there are more images to load
+          if (startIndex < deduplicatedImages.length) {
+            setImages(prev => {
+              const newImages = [...prev, ...nextPageImages];
+              // Prevent exceeding the total
+              return newImages.slice(0, deduplicatedImages.length);
+            });
+            setHasMoreImages(endIndex < deduplicatedImages.length);
+          } else {
+            setHasMoreImages(false);
+          }
+        }
         setError(null);
         setLoading(false);
       } else {
@@ -367,6 +428,8 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     setSelectedImages(new Set());
   };
 
+
+
   // Handler for deleting selected images
   const handleDeleteSelected = async () => {
     setDeleting(true);
@@ -374,6 +437,9 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     try {
       const { bucketName } = await validateEnvVariables();
       const keysToDelete = images.filter(img => selectedImages.has(img.key)).map(img => img.key);
+      const deletedCount = keysToDelete.length;
+      
+      // Delete images from S3
       for (const key of keysToDelete) {
         try {
           const deleteCommand = new DeleteObjectCommand({
@@ -387,12 +453,52 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
           return;
         }
       }
+      
+      // Update event data in DynamoDB to reflect the deleted images
+      try {
+        const userEmail = localStorage.getItem('userEmail');
+        if (userEmail) {
+          const currentEvent = await getEventById(eventId);
+          if (currentEvent) {
+            // Updates photo count
+            const newPhotoCount = Math.max(0, (currentEvent.photoCount || 0) - deletedCount);
+            
+            // Updates total image size with estimation
+            const estimatedSizeReduction = deletedCount * 1024 * 1024; // 1MB per image
+            const currentTotalSize = (currentEvent.totalImageSize || 0) * (currentEvent.totalImageSizeUnit === 'GB' ? 1024 : 1); // Convert to MB
+            const newTotalSizeMB = Math.max(0, currentTotalSize - estimatedSizeReduction);
+            
+            // Convert back to appropriate unit
+            const { size: newTotalSize, unit: newTotalUnit } = convertToAppropriateUnit(newTotalSizeMB * 1024 * 1024);
+            
+            await updateEventData(eventId, userEmail, {
+              photoCount: newPhotoCount,
+              totalImageSize: newTotalSize,
+              totalImageSizeUnit: newTotalUnit,
+              // Updates compressed size
+              totalCompressedSize: Math.max(0, (currentEvent.totalCompressedSize || 0) - (deletedCount * 0.8)), // Assume 0.8MB compressed per image
+              totalCompressedSizeUnit: currentEvent.totalCompressedSizeUnit || 'MB'
+            });
+            
+            console.log(`[DEBUG] Updated event ${eventId} after deletion: -${deletedCount} photos, new total: ${newPhotoCount}, new size: ${newTotalSize} ${newTotalUnit}`);
+          }
+        }
+      } catch (updateError) {
+        console.error('Error updating event data after deletion:', updateError);
+        // Don't fail the entire deletion if event update fails
+        // The images are already deleted from S3
+      }
+      
       // Remove deleted images from UI
       setImages(prev => prev.filter(img => !selectedImages.has(img.key)));
       setSelectedImages(new Set());
       setSelectionMode(false);
       setShowDeleteModal(false);
       setDeleting(false);
+      
+      // Show success message
+      alert(`Successfully deleted ${deletedCount} image${deletedCount !== 1 ? 's' : ''}.`);
+      
     } catch (err: any) {
       setDeleteError(err.message || 'Failed to delete images.');
       setDeleting(false);
@@ -443,6 +549,44 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
     }
   }, [selectedImage, images]);
 
+  // Helper to get button style for anchoring to image
+  const getButtonStyle = (button: 'close' | 'left' | 'right' | 'counter' | 'download' | 'rotate' | 'share', rotation: number) => {
+    // Returns style object for absolute positioning and counter-rotation
+    const inset = '2px';
+    const base = {
+      close: { top: inset, right: inset, zIndex: 10 },
+      left: { top: '50%', left: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      right: { top: '50%', right: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      counter: { top: inset, left: inset, zIndex: 10 },
+      download: { bottom: inset, right: '56px', zIndex: 10 }, // space for rotate
+      rotate: { bottom: inset, right: inset, zIndex: 10 },
+      share: { bottom: inset, left: inset, zIndex: 10 },
+    } as const;
+    return base[button];
+  };
+
+  // Helper to get image aspect ratio and dynamic overlay size
+  const getOverlayStyle = (img: HTMLImageElement | null, rotation: number) => {
+    // Default to 4:3 ratio if no image loaded
+    let aspect = 4 / 3;
+    if (img && img.naturalWidth && img.naturalHeight) {
+      aspect = img.naturalWidth / img.naturalHeight;
+      if (rotation % 180 !== 0) aspect = 1 / aspect;
+    }
+    // Outer modal is 90% width/height, inner overlay is 70% (gap is 10% on each side)
+    return {
+      width: aspect >= 1 ? '70%' : `${70 * aspect}%`,
+      height: aspect >= 1 ? `${70 / aspect}%` : '70%',
+      maxWidth: '70%',
+      maxHeight: '70%',
+      borderRadius: '2rem 2rem 4rem 4rem/3rem 3rem 6rem 6rem',
+      background: 'rgba(255,255,255,0.7)',
+      boxShadow: '0 4px 32px 0 rgba(0,0,0,0.10)',
+      overflow: 'hidden',
+      transform: `rotate(${rotation}deg)`
+    };
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
@@ -485,17 +629,30 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
               <ArrowLeft className="w-5 h-5 mr-2" />
               Back to Events
             </Link>
-            <div className="text-sm text-blue-500">
-              Event Code: 
-              <span className="font-mono bg-gray-100 px-2 py-1 rounded">{eventId}</span>
+            <div className="text-sm text-blue-500 flex items-center">
+              Event Code:
+              <span className="font-mono bg-gray-100 px-2 py-1 rounded ml-2">{eventId}</span>
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(eventId);
+                  setShowCopyEventId(true);
+                  setTimeout(() => setShowCopyEventId(false), 2000);
                 }}
-                className="ml-2 text-blue-500 hover:text-blue-700 transition-colors duration-200"
+                className="ml-2 text-blue-500 hover:text-blue-700 transition-colors duration-200 flex items-center"
                 aria-label="Copy event code"
+                type="button"
               >
-                <Copy className="w-5 h-3" />
+                {showCopyEventId ? (
+                  <>
+                    <CheckCircle className="w-5 h-5 text-green-500" />
+                    <span className="ml-1 text-green-600 font-semibold">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-5 h-5" />
+                    <span className="ml-1">Copy</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -554,12 +711,21 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                 `${window.location.origin}/attendee-dashboard?eventId=${eventId}`
               );
               setShowCopySuccess(true);
-              setTimeout(() => setShowCopySuccess(false), 2000);
+              setTimeout(() => setShowCopySuccess(false), 3000);
             }}
             className="flex items-center justify-center bg-blue-200 text-black py-3 px-4 rounded-lg hover:bg-secondary transition-colors duration-200 h-12 w-full"
           >
-            <Copy className="w-5 h-5 mr-2" />
-            {showCopySuccess ? 'Copied!' : 'Share Link'}
+            {showCopySuccess ? (
+              <>
+                <CheckCircle className="w-5 h-5 text-green-500" />
+                <span className="ml-2 text-green-600 font-semibold">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-5 h-5 mr-2" />
+                Share Link
+              </>
+            )}
           </button>
           
           <button
@@ -659,7 +825,8 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
           </div>
         )}
         <div className="space-y-8">
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-4 p-4">
+          
+          <div className="grid grid-cols-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-1.5 p-1.5">
             {images.map((image, idx) => (
               <div
                 key={image.key}
@@ -701,10 +868,32 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
               </div>
             ))}
           </div>
+          
+          {/* Infinite Scroll Trigger */}
+          {hasMoreImages && images.length > 0 && (
+            <div ref={loadMoreRef} className="h-4"></div>
+          )}
+          
+          {/* Loading indicator for infinite scroll */}
+          {loading && hasMoreImages && (
+            <div className="flex justify-center mt-8">
+              <div className="flex items-center gap-2 text-gray-600">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                Loading more images...
+              </div>
+            </div>
+          )}
         </div>
         
 
-        {images.length === 0 && (
+        {loading && images.length === 0 && (
+          <div className="text-center py-16 bg-gray-50 rounded-lg">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-xl text-gray-600">Loading images...</p>
+          </div>
+        )}
+
+        {!loading && images.length === 0 && (
           <div className="text-center py-16 bg-gray-50 rounded-lg">
             <Camera className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <p className="text-xl text-gray-600">No images found for this event</p>
@@ -716,77 +905,152 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
 
         {selectedImage && (
           <div 
-            className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" 
+            className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
             onClick={() => {
               setSelectedImage(null);
               toggleHeaderFooter(true);
             }}
           >
-            <div className="relative bg-white rounded-lg shadow-xl max-w-[800px] max-h-[600px] w-full mx-auto" onClick={e => e.stopPropagation()}>
-              <img
-                src={selectedImage.url}
-                alt="Enlarged event photo"
-                className="w-full h-full object-contain rounded-lg"
-                style={{ maxHeight: 'calc(600px - 4rem)' }}
-              />
-              
+            <div
+              className="relative flex items-center justify-center bg-black rounded-2xl shadow-xl overflow-hidden"
+              style={{
+                width: 'min(90vw, 90vh)',
+                height: 'min(90vw, 90vh)',
+                minWidth: 320,
+                minHeight: 320,
+                maxWidth: 900,
+                maxHeight: 900,
+                aspectRatio: '1/1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxSizing: 'border-box',
+                padding: 0,
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div
+                className="flex items-center justify-center w-full h-full"
+                style={{
+                  boxSizing: 'border-box',
+                  padding: 5,
+                  width: '100%',
+                  height: '100%',
+                }}
+              >
+                <img
+                  id="modal-img"
+                  src={selectedImage.url}
+                  alt="Enlarged event photo"
+                  className="object-contain"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    borderRadius: 'inherit',
+                    display: 'block',
+                    transform: `rotate(${rotation}deg)`,
+                    transition: 'transform 0.3s',
+                    background: 'transparent',
+                    pointerEvents: 'auto',
+                    userSelect: 'none',
+                  }}
+                />
+              </div>
               {/* Close button */}
               <button
-                className="absolute top-4 right-4 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                 onClick={() => {
                   setSelectedImage(null);
                   toggleHeaderFooter(true);
                 }}
+                style={{ top: 12, right: 12, zIndex: 10 }}
+                title="Close"
               >
-                <X className="w-8 h-8" />
+                <X className="w-5 h-5 sm:w-8 sm:h-8" />
               </button>
-              
-              {/* Download button */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDownload(selectedImage.url);
-                }}
-                className="absolute bottom-4 right-4 p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
-              >
-                <Download className="w-6 h-6" />
-              </button>
-              
               {/* Navigation arrows */}
               {images.length > 1 && (
                 <>
-                  {/* Previous button */}
                   <button
-                    onClick={(e) => {
+                    onClick={e => {
                       e.stopPropagation();
                       goToPreviousImage();
                     }}
-                    className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                     title="Previous image (←)"
+                    style={{ left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10 }}
                   >
-                    <ChevronLeft className="w-8 h-8" />
+                    <ChevronLeft className="w-5 h-5 sm:w-8 sm:h-8" />
                   </button>
-                  
-                  {/* Next button */}
                   <button
-                    onClick={(e) => {
+                    onClick={e => {
                       e.stopPropagation();
                       goToNextImage();
                     }}
-                    className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                    className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                     title="Next image (→)"
+                    style={{ right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10 }}
                   >
-                    <ChevronRight className="w-8 h-8" />
+                    <ChevronRight className="w-5 h-5 sm:w-8 sm:h-8" />
                   </button>
                 </>
               )}
-              
               {/* Image counter */}
               {images.length > 1 && (
-                <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/20 text-white text-sm">
+                <div className="absolute px-3 py-1 sm:px-4 sm:py-2 rounded-full bg-black/40 text-white text-xs sm:text-sm shadow-lg" style={{ top: 12, left: 12, zIndex: 10 }}>
                   {getCurrentImageIndex() + 1} / {images.length}
                 </div>
               )}
+              {/* Download and Rotate buttons at bottom-right with more spacing */}
+              <div className="absolute flex space-x-3 sm:space-x-6" style={{ bottom: 12, right: 20, zIndex: 10 }}>
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    handleDownload(selectedImage.url);
+                  }}
+                  className="p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                  title="Download"
+                >
+                  <Download className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    setRotation(r => (r + 90) % 360);
+                  }}
+                  className="p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                  title="Rotate image"
+                >
+                  <RotateCw className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+              </div>
+              {/* Share button at bottom-left */}
+              <button
+                onClick={async e => {
+                  e.stopPropagation();
+                  if (navigator.share) {
+                    try {
+                      await navigator.share({
+                        title: 'Event Photo',
+                        url: selectedImage.url,
+                      });
+                    } catch (err) {
+                      // User cancelled or not supported
+                    }
+                  } else {
+                    navigator.clipboard.writeText(selectedImage.url);
+                    setShowCopySuccess(true);
+                    setTimeout(() => setShowCopySuccess(false), 2000);
+                  }
+                }}
+                className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                style={{ bottom: 12, left: 12, zIndex: 10 }}
+                title="Share"
+              >
+                <Share2 className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
             </div>
           </div>
         )}
@@ -822,13 +1086,22 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                   onClick={() => {
                     const uploadLink = `${window.location.origin}/upload?eventId=${eventId}`;
                     navigator.clipboard.writeText(uploadLink);
-                    setShowCopySuccess(true);
-                    setTimeout(() => setShowCopySuccess(false), 2000);
+                    setShowCopyUpload(true);
+                    setTimeout(() => setShowCopyUpload(false), 3000);
                   }}
                   className="w-full flex items-center justify-center bg-blue-100 text-blue-700 py-2 px-4 rounded-lg hover:bg-blue-200 transition-colors duration-200"
                 >
-                  <Copy className="w-4 h-4 mr-2" />
-                  {showCopySuccess ? 'Copied!' : 'Copy Upload Link'}
+                  {showCopyUpload ? (
+                    <>
+                      <CheckCircle className="w-4 h-4 text-green-500" />
+                      <span className="ml-1 text-green-600 font-semibold">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4 mr-2" />
+                      Copy Upload Link
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -896,10 +1169,21 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
                       className="flex-1 px-2 py-1 border rounded text-xs bg-gray-100"
                     />
                     <button
-                      className="text-blue-500 hover:text-blue-700 text-xs"
-                      onClick={() => navigator.clipboard.writeText(img.url)}
+                      className="text-blue-500 hover:text-blue-700 text-xs flex items-center"
+                      onClick={() => {
+                        navigator.clipboard.writeText(img.url);
+                        setShowCopiedIndex(img.key);
+                        setTimeout(() => setShowCopiedIndex(null), 3000);
+                      }}
                     >
-                      Copy
+                      {showCopiedIndex === img.key ? (
+                        <>
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                          <span className="ml-1 text-green-600 font-semibold">Copied</span>
+                        </>
+                      ) : (
+                        <>Copy</>
+                      )}
                     </button>
                   </div>
                 ))}

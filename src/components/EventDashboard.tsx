@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Camera, Image, Video, Users, Plus, X, Trash2, Copy, RefreshCw, CheckCircle, Edit, QrCode, Download, Search } from 'lucide-react';
+import { Camera, Image, Video, Users, Plus, X, Trash2, Copy, RefreshCw, CheckCircle, Edit, QrCode, Download, Search, Filter, Check } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
     storeEventData, 
@@ -19,6 +19,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { UserContext } from '../App';
 import { storeUserCredentials, getUserByEmail, queryUserByEmail } from '../config/dynamodb';
 import { ObjectCannedACL } from '@aws-sdk/client-s3';
+import heic2any from 'heic2any';
 
 // Initialize S3 bucket name
 let s3BucketName: string = '';
@@ -118,7 +119,8 @@ const EventDashboard = (props: EventDashboardProps) => {
 
     const [userProfile, setUserProfile] = useState<any>(null);
     const [copiedCode, setCopiedCode] = useState(false);
-    const [sortOption, setSortOption] = useState<'name' | 'date'>('date');
+    // Change sortOption state to allow 'default'
+    const [sortOption, setSortOption] = useState<'default' | 'name' | 'date'>('default');
     const [showQRCode, setShowQRCode] = useState(false);
 
     // State for event editing
@@ -143,17 +145,16 @@ const EventDashboard = (props: EventDashboardProps) => {
     // Add search state
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Sort events based on selected option
-    const sortedEvents = React.useMemo(() => 
-        [...events].sort((a, b) => {
-            if (sortOption === 'name') {
-                return a.name.localeCompare(b.name);
-            } else {
-                return new Date(b.date).getTime() - new Date(a.date).getTime();
-            }
-        }),
-        [events, sortOption]
-    );
+    // Update sorting logic to handle 'default'
+    const sortedEvents = React.useMemo(() => {
+        if (sortOption === 'name') {
+            return [...events].sort((a, b) => a.name.localeCompare(b.name));
+        } else if (sortOption === 'date') {
+            return [...events].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        } else {
+            return [...events]; // No sorting
+        }
+    }, [events, sortOption]);
 
     // Filter events based on search query
     const filteredEvents = React.useMemo(() => 
@@ -378,25 +379,72 @@ const EventDashboard = (props: EventDashboardProps) => {
         }
     };
 
-    const handleCoverImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0];
-            
-            // Validate file size
-            if (file.size > MAX_COVER_IMAGE_SIZE) {
-                alert(`File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) exceeds the maximum limit of 500MB`);
-                return;
-            }
+    // Always convert to .jpg extension, including HEIC/HEIF support
+    const handleCoverImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
 
-            // Validate file type
-            if (!file.type.startsWith('image/')) {
-                alert('Please upload a valid image file');
-                return;
+      // Helper to convert any image to JPEG with .jpg extension
+      const convertToJpg = (file: File): Promise<File> => {
+        return new Promise(async (resolve, reject) => {
+          const fileName = file.name.toLowerCase();
+          const isHeicHeif = fileName.endsWith('.heic') || fileName.endsWith('.heif') || file.type === 'image/heic' || file.type === 'image/heif';
+          if (isHeicHeif) {
+            try {
+              // Use heic2any to convert HEIC/HEIF to JPEG
+              const jpegBlob = await heic2any({
+                blob: file,
+                toType: 'image/jpeg',
+                quality: 0.9,
+              }) as Blob;
+              const jpgFile = new File([jpegBlob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+              resolve(jpgFile);
+              return;
+            } catch (err) {
+              reject(new Error('Failed to convert HEIC/HEIF image to JPG'));
+              return;
             }
+          }
+          // For other image types, use canvas
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const img = new window.Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return reject(new Error('Failed to get canvas context'));
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob((blob) => {
+                if (!blob) return reject(new Error('Failed to convert image to JPG'));
+                const jpgFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+                resolve(jpgFile);
+              }, 'image/jpeg', 0.9);
+            };
+            img.onerror = reject;
+            img.src = event.target?.result as string;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      };
 
-            setNewEvent(prev => ({ ...prev, coverImage: file }));
-            setCoverImagePreview(URL.createObjectURL(file));
-        }
+      let jpgFile;
+      try {
+        jpgFile = await convertToJpg(file);
+      } catch (err) {
+        alert('Failed to convert image to JPG. Please try another image.');
+        return;
+      }
+
+      // Set the preview and update state with the JPG file
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setCoverImagePreview(event.target?.result as string);
+        setNewEvent(prev => ({ ...prev, coverImage: jpgFile }));
+      };
+      reader.readAsDataURL(jpgFile);
     };
 
     const handleOpenCreateModal = async () => {
@@ -794,97 +842,100 @@ const EventDashboard = (props: EventDashboardProps) => {
     };
 
     // Update the handleEditCoverImage function
-    const handleEditCoverImage = async (event: React.ChangeEvent<HTMLInputElement>, eventId: string) => {
-        if (event.target.files && event.target.files[0]) {
-            const file = event.target.files[0];
-            const { bucketName } = await validateEnvVariables();
+    const handleEditCoverImage = async (e: React.ChangeEvent<HTMLInputElement>, eventId: string) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      // Helper to convert any image to JPEG with .jpg extension
+      const convertToJpg = (file: File): Promise<File> => {
+        return new Promise(async (resolve, reject) => {
+          const fileName = file.name.toLowerCase();
+          const isHeicHeif = fileName.endsWith('.heic') || fileName.endsWith('.heif') || file.type === 'image/heic' || file.type === 'image/heif';
+          if (isHeicHeif) {
             try {
-                // Show loading state
-                setIsLoading(true);
-                
-                // Validate file size
-                if (file.size > MAX_COVER_IMAGE_SIZE) {
-                    alert(`File size exceeds the maximum limit of 500MB`);
-                    return;
-                }
-
-                // Validate file type
-                if (!file.type.startsWith('image/')) {
-                    alert('Please upload a valid image file');
-                    return;
-                }
-                
-                // Detect orientation from the file before upload
-                const detectOrientationFromFile = (f: File) => {
-                    const img = document.createElement('img');
-                    const url = URL.createObjectURL(f);
-                    img.onload = () => {
-                        const orientation = img.width >= img.height ? 'landscape' : 'portrait';
-                        setImageOrientations(prev => ({
-                            ...prev,
-                            [eventId]: orientation
-                        }));
-                        URL.revokeObjectURL(url);
-                    };
-                    img.src = url;
-                };
-                
-                detectOrientationFromFile(file);
-
-                // Get existing event first
-                const existingEvent = await getEventById(eventId);
-                if (!existingEvent) {
-                    throw new Error('Event not found');
-                }
-
-                // Create a unique key for the cover image
-                const coverImageKey = `events/shared/${eventId}/cover.jpg`;
-
-                // Convert File to arrayBuffer
-                const fileBuffer = await file.arrayBuffer();
-                
-                // Upload directly to S3 using PutObjectCommand
-                const uploadCommand = new PutObjectCommand({
-                    Bucket: bucketName,
-                    Key: coverImageKey,
-                    Body: new Uint8Array(fileBuffer),
-                    ContentType: file.type,
-                    ACL: 'public-read' as ObjectCannedACL
-                });
-
-                await (await s3ClientPromise).send(uploadCommand);
-
-                // Generate the S3 URL with timestamp to prevent caching
-                const timestamp = Date.now();
-                const coverImageUrl = `https://${bucketName}.s3.amazonaws.com/${coverImageKey}?t=${timestamp}`;
-
-                // Update event with new cover image URL
-                const updatedEvent = {
-                    ...existingEvent,
-                    coverImage: coverImageUrl,
-                    updatedAt: new Date().toISOString()
-                };
-
-                // Store updated event
-                const success = await storeEventData(updatedEvent);
-                
-                if (!success) {
-                    throw new Error('Failed to update event data');
-                }
-
-                // Refresh events list
-                await loadEvents();
-
-                // Show success message
-                alert('Cover image updated successfully');
-
-            } catch (error) {
-                console.error('Error updating cover image:', error);
-                alert('Failed to update cover image. Please try again.');
-            } finally {
-                setIsLoading(false);
+              const jpegBlob = await heic2any({
+                blob: file,
+                toType: 'image/jpeg',
+                quality: 0.9,
+              }) as Blob;
+              const jpgFile = new File([jpegBlob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+              resolve(jpgFile);
+              return;
+            } catch (err) {
+              reject(new Error('Failed to convert HEIC/HEIF image to JPG'));
+              return;
             }
-        }
+          }
+          // For other image types, use canvas
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const img = new window.Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return reject(new Error('Failed to get canvas context'));
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob((blob) => {
+                if (!blob) return reject(new Error('Failed to convert image to JPG'));
+                const jpgFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+                resolve(jpgFile);
+              }, 'image/jpeg', 0.9);
+            };
+            img.onerror = reject;
+            img.src = event.target?.result as string;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      };
+
+      let jpgFile;
+      try {
+        jpgFile = await convertToJpg(file);
+      } catch (err) {
+        alert('Failed to convert image to JPG. Please try another image.');
+        return;
+      }
+
+      // Upload the new cover image to S3 and update the event
+      try {
+        setIsLoading(true);
+        const { bucketName } = await validateEnvVariables();
+        const coverImageKey = `events/shared/${eventId}/cover.jpg`;
+        const fileBuffer = await jpgFile.arrayBuffer();
+        const uploadCommand = new PutObjectCommand({
+          Bucket: bucketName,
+          Key: coverImageKey,
+          Body: new Uint8Array(fileBuffer),
+          ContentType: 'image/jpeg',
+          ACL: 'public-read' as ObjectCannedACL
+        });
+        await (await s3ClientPromise).send(uploadCommand);
+        // Generate the S3 URL with timestamp to prevent caching
+        const timestamp = Date.now();
+        const coverImageUrl = `https://${bucketName}.s3.amazonaws.com/${coverImageKey}?t=${timestamp}`;
+        // Update event with new cover image URL
+        const existingEvent = await getEventById(eventId);
+        if (!existingEvent) throw new Error('Event not found');
+        const updatedEvent = {
+          ...existingEvent,
+          coverImage: coverImageUrl,
+          updatedAt: new Date().toISOString()
+        };
+        // Store updated event
+        const success = await storeEventData(updatedEvent);
+        if (!success) throw new Error('Failed to update event data');
+        // Update the local events state to reflect the new cover image immediately
+        setEvents(prevEvents => prevEvents.map(ev => ev.id === eventId ? { ...ev, coverImage: coverImageUrl } : ev));
+        setIsLoading(false);
+        alert('Cover image updated successfully');
+      } catch (error) {
+        setIsLoading(false);
+        console.error('Error updating cover image:', error);
+        alert('Failed to update cover image. Please try again.');
+      }
     };
 
     const handleDownloadQR = () => {
@@ -914,6 +965,15 @@ const EventDashboard = (props: EventDashboardProps) => {
     const handleOrgLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file || !userEmail) return;
+
+        // Store logo as data URL in localStorage for watermarking
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          if (ev.target && typeof ev.target.result === 'string') {
+            localStorage.setItem('orgLogoDataUrl', ev.target.result);
+          }
+        };
+        reader.readAsDataURL(file);
 
         // Validate file
         if (file.size > MAX_COVER_IMAGE_SIZE) {
@@ -950,7 +1010,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                 // Update local state
                 setUserProfile((prev: any) => ({
                     ...prev,
-                    organizationLogo: logoUrl
+                    organizationLogo: logoUrl ? `${logoUrl}?t=${Date.now()}` : undefined
                 }));
 
                 // Success - logo updated
@@ -1025,6 +1085,20 @@ const EventDashboard = (props: EventDashboardProps) => {
         setIsEditingOrgName(false);
         setEditedOrgName('');
     };
+
+    // Add state and outside click handler for mobile sort dropdown
+    const [showMobileSortDropdown, setShowMobileSortDropdown] = useState(false);
+    useEffect(() => {
+      if (!showMobileSortDropdown) return;
+      const handleClick = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        if (!target.closest('.mobile-sort-popover') && !target.closest('.mobile-sort-filter-btn')) {
+          setShowMobileSortDropdown(false);
+        }
+      };
+      document.addEventListener('mousedown', handleClick);
+      return () => document.removeEventListener('mousedown', handleClick);
+    }, [showMobileSortDropdown]);
 
     return (
         <div className={`relative bg-blue-45 flex flex-col pt-16 sm:pt-16 ${events.length === 0 ? 'h-[calc(100vh-70px)]' : 'min-h-screen'}`}>
@@ -1143,7 +1217,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                 </div>
                               ) : userProfile?.organizationLogo ? (
                                 <img 
-                                  src={userProfile.organizationLogo} 
+                                  src={userProfile.organizationLogo || '/pixigologo.svg'} 
                                   alt="Organization Logo" 
                                   className="h-full w-full object-cover group-hover:opacity-90 transition-opacity"
                                 />
@@ -1254,7 +1328,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                               </div>
                             ) : userProfile?.organizationLogo ? (
                               <img 
-                                src={userProfile.organizationLogo} 
+                                src={userProfile.organizationLogo || '/pixigologo.svg'} 
                                 alt="Organization Logo" 
                                 className="h-full w-full object-cover group-hover:opacity-90 transition-opacity"
                               />
@@ -1571,31 +1645,70 @@ const EventDashboard = (props: EventDashboardProps) => {
                                         className="w-48 pl-10 pr-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
                                     />
                                 </div>
+                                {/* Sort dropdown (desktop) */}
                                 <div className="w-40">
                                     <select
                                         className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
                                         value={sortOption}
-                                        onChange={(e) => setSortOption(e.target.value as 'name' | 'date')}
+                                        onChange={(e) => setSortOption(e.target.value as 'default' | 'name' | 'date')}
                                     >
+                                        <option value="default">Sort (Default)</option>
                                         <option value="date">Sort by Date</option>
                                         <option value="name">Sort by Name (A-Z)</option>
                                     </select>
                                 </div>
                             </div>
                         </div>
-                        {/* Mobile Search Input */}
-                        <div className="sm:hidden mb-4">
-                            <div className="relative">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Search className="h-4 w-4 text-gray-400" />
+                        {/* Mobile Search Input and Sort Dropdown */}
+                        <div className="sm:hidden mb-4 flex flex-col gap-2 relative">
+                            <div className="flex items-center gap-2 relative">
+                                <div className="relative flex-1">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <Search className="h-4 w-4 text-gray-400" />
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Search events..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="w-full pl-10 pr-3 py-2 text-sm border border-gray-300 rounded-md bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                    />
                                 </div>
-                                <input
-                                    type="text"
-                                    placeholder="Search events..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full pl-10 pr-3 py-2 text-sm border border-gray-300 rounded-md bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                                />
+                                {/* Filter icon for sort options */}
+                                <button
+                                    type="button"
+                                    className="p-2 rounded-full bg-white border border-gray-300 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex-shrink-0 mobile-sort-filter-btn"
+                                    onClick={() => setShowMobileSortDropdown(v => !v)}
+                                    aria-label="Show sort options"
+                                >
+                                    <Filter className="h-5 w-5 text-blue-600" />
+                                </button>
+                                {/* Sort dropdown popover */}
+                                {showMobileSortDropdown && (
+                                    <div
+                                        className="absolute top-12 right-0 z-50 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-2 animate-fadeIn mobile-sort-popover"
+                                        style={{ maxWidth: 'calc(100vw - 2rem)' }}
+                                    >
+                                        <button
+                                            className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'default' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
+                                            onClick={() => { setSortOption('default'); setShowMobileSortDropdown(false); }}
+                                        >
+                                            {sortOption === 'default' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Default
+                                        </button>
+                                        <button
+                                            className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'date' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
+                                            onClick={() => { setSortOption('date'); setShowMobileSortDropdown(false); }}
+                                        >
+                                            {sortOption === 'date' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Sort by Date
+                                        </button>
+                                        <button
+                                            className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'name' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
+                                            onClick={() => { setSortOption('name'); setShowMobileSortDropdown(false); }}
+                                        >
+                                            {sortOption === 'name' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Sort by Name (A-Z)
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">

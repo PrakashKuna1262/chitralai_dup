@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Camera, Calendar, Image as ImageIcon, X, Search, Download, Share2, Facebook, Instagram, Twitter, Linkedin, MessageCircle, Mail, Link, ChevronLeft, ChevronRight } from 'lucide-react';
-import { ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { Camera, Calendar, Image as ImageIcon, X, Search, Download, Share2, Facebook, Instagram, Twitter, Linkedin, MessageCircle, Mail, Link, ChevronLeft, ChevronRight, RotateCw } from 'lucide-react';
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, rekognitionClientPromise, validateEnvVariables } from '../config/aws';
-import { CompareFacesCommand } from '@aws-sdk/client-rekognition';
 import { getEventById } from '../config/eventStorage';
 import { storeAttendeeImageData } from '../config/attendeeStorage';
 import { searchFacesByImage } from '../services/faceRecognition';
@@ -63,6 +61,70 @@ const constructS3Url = (imageUrl: string, bucket?: string): string => {
   return `https://${useBucket}.s3.amazonaws.com/${imageUrl}`;
 };
 
+// Add helper function to parse and format dates
+const formatDate = (dateString: string) => {
+  if (!dateString) return '';
+
+  try {
+    let date: Date;
+    
+    // First, try to extract the date components
+    const dateFormats = [
+      /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, // dd/mm/yyyy
+      /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/, // dd/mm/yy
+      /^(\d{4})-(\d{1,2})-(\d{1,2})$/, // yyyy-mm-dd
+      /^(\d{1,2})-(\d{1,2})-(\d{4})$/, // dd-mm-yyyy
+    ];
+
+    for (const format of dateFormats) {
+      const match = dateString.match(format);
+      if (match) {
+        let [_, first, second, third] = match;
+        
+        // Handle 2-digit year
+        if (third.length === 2) {
+          const twoDigitYear = parseInt(third);
+          // Convert 2-digit year to 4-digit year
+          // Years 00-29 → 2000-2029
+          // Years 30-99 → 1930-1999
+          third = (twoDigitYear >= 30 ? '19' : '20') + third.padStart(2, '0');
+        }
+
+        if (format.toString().includes('yyyy-')) {
+          // yyyy-mm-dd format
+          date = new Date(parseInt(first), parseInt(second) - 1, parseInt(third));
+        } else {
+          // dd/mm/yyyy format
+          date = new Date(parseInt(third), parseInt(second) - 1, parseInt(first));
+        }
+        
+        if (!isNaN(date.getTime())) {
+          // Format date as dd/mm/yyyy
+          const day = date.getDate().toString().padStart(2, '0');
+          const month = (date.getMonth() + 1).toString().padStart(2, '0');
+          const year = date.getFullYear();
+          return `${day}/${month}/${year}`;
+        }
+      }
+    }
+
+    // If no format matched, try parsing as ISO string or other formats
+    date = new Date(dateString);
+    if (!isNaN(date.getTime())) {
+      const day = date.getDate().toString().padStart(2, '0');
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const year = date.getFullYear();
+      return `${day}/${month}/${year}`;
+    }
+
+    throw new Error('Invalid date');
+  } catch (error) {
+    console.warn('Error formatting date:', dateString, error);
+    // Return the original string if we can't parse it
+    return dateString;
+  }
+};
+
 const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModal }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -116,6 +178,14 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
   const [isLoading, setIsLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+
+  // Add rotation state at the top of the component
+  const [rotation, setRotation] = useState(0);
+
+  // Reset rotation when image changes or modal closes
+  useEffect(() => {
+    setRotation(0);
+  }, [selectedImage]);
 
   // Toggle header and footer visibility when image is clicked
   const toggleHeaderFooter = (visible: boolean) => {
@@ -1168,6 +1238,42 @@ console.log(`User ${userEmail} downloading image`);
     }
   }, [selectedImage, filteredImages]);
 
+  // Helper to get button style for anchoring to image
+  const getButtonStyle = (button: 'close' | 'left' | 'right' | 'counter' | 'download' | 'rotate' | 'share', rotation: number) => {
+    // Returns style object for absolute positioning and counter-rotation
+    const inset = '2px';
+    const base = {
+      close: { top: inset, right: inset, zIndex: 10 },
+      left: { top: '50%', left: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      right: { top: '50%', right: inset, transform: 'translateY(-50%)', zIndex: 10 },
+      counter: { top: inset, left: inset, zIndex: 10 },
+      download: { bottom: inset, right: '56px', zIndex: 10 }, // space for rotate
+      rotate: { bottom: inset, right: inset, zIndex: 10 },
+      share: { bottom: inset, left: inset, zIndex: 10 },
+    };
+    return base[button];
+  };
+
+  // Helper to get image aspect ratio and dynamic overlay size
+  const getOverlayStyle = (img: HTMLImageElement | null, rotation: number) => {
+    let aspect = 4 / 3;
+    if (img && img.naturalWidth && img.naturalHeight) {
+      aspect = img.naturalWidth / img.naturalHeight;
+      if (rotation % 180 !== 0) aspect = 1 / aspect;
+    }
+    return {
+      width: aspect >= 1 ? '70%' : `${70 * aspect}%`,
+      height: aspect >= 1 ? `${70 / aspect}%` : '70%',
+      maxWidth: '70%',
+      maxHeight: '70%',
+      borderRadius: '2rem 2rem 4rem 4rem/3rem 3rem 6rem 6rem',
+      background: 'rgba(255,255,255,0.7)',
+      boxShadow: '0 4px 32px 0 rgba(0,0,0,0.10)',
+      overflow: 'hidden',
+      transform: `rotate(${rotation}deg)`
+    };
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -1234,11 +1340,11 @@ console.log(`User ${userEmail} downloading image`);
               </div>
             </form>
             
-            {!selfieUrl && eventDetails && (
+            {eventDetails && (
               <div className="border border-blue-200 bg-blue-50 p-3 rounded-lg mt-4">
                 <h3 className="font-semibold text-blue-800 text-sm">{eventDetails.name}</h3>
                 <p className="text-blue-600 text-xs">
-                  {new Date(eventDetails.date).toLocaleDateString()}
+                  {formatDate(eventDetails.date)}
                 </p>
                 
                 <div className="mt-3">
@@ -1346,31 +1452,30 @@ console.log(`User ${userEmail} downloading image`);
             {selectedEventFilter !== 'all' && (
               <p className="text-gray-600 text-sm mt-1">
                 {attendedEvents.find(e => e.eventId === selectedEventFilter)?.eventDate 
-                  ? `Event date: ${new Date(attendedEvents.find(e => e.eventId === selectedEventFilter)?.eventDate || '').toLocaleDateString()}`
+                  ? `Event date: ${formatDate(attendedEvents.find(e => e.eventId === selectedEventFilter)?.eventDate || '')}`
                   : ''
                 }
               </p>
             )}
           </div>
           
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex flex-row sm:flex-row items-center sm:justify-between gap-2 mb-4">
             {filteredImages.length > 0 && (
               <button
                 onClick={handleDownloadAll}
-                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex items-center w-1/2 sm:w-auto justify-center px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
               >
                 <Download className="h-4 w-4 mr-2" />
                 Download All
               </button>
             )}
-            
-            <div className="flex items-center gap-2 flex-wrap">
-              <label htmlFor="event-filter" className="text-gray-700 whitespace-nowrap">Filter by event:</label>
+            <div className="flex items-center gap-2 w-1/2 sm:w-auto sm:ml-auto">
+              <label htmlFor="event-filter" className="text-gray-700 whitespace-nowrap hidden sm:block">Filter by event:</label>
               <select
                 id="event-filter"
                 value={selectedEventFilter}
                 onChange={handleEventFilterChange}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-auto max-w-[230px]"
+                className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="all">All Events</option>
                 {attendedEvents
@@ -1385,7 +1490,7 @@ console.log(`User ${userEmail} downloading image`);
           </div>
           
           {filteredImages.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="grid grid-cols-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-1.5 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
               {filteredImages.map((image, idx) => {
                 // Create a unique key using the image URL and index to handle duplicates
                 const uniqueKey = `${image.eventId || 'noevent'}-${image.imageUrl}-${idx}`;
@@ -1404,42 +1509,6 @@ console.log(`User ${userEmail} downloading image`);
                         alt={`Photo from ${image.eventName}`}
                         className="w-full h-full object-cover"
                       />
-                    </div>
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownload(image.imageUrl);
-                          }}
-                          className="p-2 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors duration-200"
-                        >
-                          <Download className="w-5 h-5" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Try native sharing first
-                            if (typeof navigator.share === 'function') {
-                              handleShare('', image.imageUrl, e);
-                            } else {
-                              // Fall back to custom share menu
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              setShareMenu({
-                                isOpen: true,
-                                imageUrl: image.imageUrl,
-                                position: {
-                                  top: rect.top - 200,
-                                  left: rect.left - 200
-                                }
-                              });
-                            }
-                          }}
-                          className="p-2 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors duration-200"
-                        >
-                          <Share2 className="w-5 h-5" />
-                        </button>
-                      </div>
                     </div>
                   </div>
                 );
@@ -1489,12 +1558,19 @@ console.log(`User ${userEmail} downloading image`);
               <p className="text-gray-500 text-sm mt-2">Enter an event code above to find your photos from an event.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-1.5 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
               {attendedEvents
                 .filter(event => event.eventId !== 'default')
                 .sort((a, b) => {
                   if (eventSortOption === 'date') {
-                    return new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime();
+                    // Parse dates using the same format for consistent sorting
+                    const dateA = new Date(a.eventDate.includes('/') ? 
+                      a.eventDate.split('/').reverse().join('-') : 
+                      a.eventDate);
+                    const dateB = new Date(b.eventDate.includes('/') ? 
+                      b.eventDate.split('/').reverse().join('-') : 
+                      b.eventDate);
+                    return dateB.getTime() - dateA.getTime();
                   } else {
                     return a.eventName.localeCompare(b.eventName);
                   }
@@ -1514,7 +1590,7 @@ console.log(`User ${userEmail} downloading image`);
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3">
                         <h3 className="text-white font-semibold truncate">{event.eventName}</h3>
                         <p className="text-white/80 text-sm">
-                          {new Date(event.eventDate).toLocaleDateString()}
+                          {formatDate(event.eventDate)}
                         </p>
                       </div>
                     </div>
@@ -1528,101 +1604,155 @@ console.log(`User ${userEmail} downloading image`);
       {/* Enlarged Image Modal */}
       {selectedImage && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
           onClick={() => {
             setSelectedImage(null);
             toggleHeaderFooter(true);
           }}
         >
-          <div className="relative bg-white rounded-lg shadow-xl max-w-[800px] max-h-[600px] w-full mx-auto" onClick={e => e.stopPropagation()}>
-            <img
-              src={selectedImage.imageUrl}
-              alt={`Enlarged photo from ${selectedImage.eventName}`}
-              className="w-full h-full object-contain rounded-lg"
-              style={{ maxHeight: 'calc(600px - 4rem)' }}
-            />
-            
+          <div
+            className="relative flex items-center justify-center bg-black rounded-2xl shadow-xl overflow-hidden"
+            style={{
+              width: 'min(90vw, 90vh)',
+              height: 'min(90vw, 90vh)',
+              minWidth: 320,
+              minHeight: 320,
+              maxWidth: 900,
+              maxHeight: 900,
+              aspectRatio: '1/1',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxSizing: 'border-box',
+              padding: 0,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Image with 4–5px gap, centered, rotates */}
+            <div
+              className="flex items-center justify-center w-full h-full"
+              style={{
+                boxSizing: 'border-box',
+                padding: 5,
+                width: '100%',
+                height: '100%',
+              }}
+            >
+              <img
+                id="modal-img"
+                src={selectedImage.imageUrl}
+                alt={`Enlarged photo from ${selectedImage.eventName}`}
+                className="object-contain"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  borderRadius: 'inherit',
+                  display: 'block',
+                  transform: `rotate(${rotation}deg)`,
+                  transition: 'transform 0.3s',
+                  background: 'transparent',
+                  pointerEvents: 'auto',
+                  userSelect: 'none',
+                }}
+              />
+            </div>
+            {/* Action icons - not rotating, always on top, with consistent background */}
             {/* Close button */}
             <button
-              className="absolute top-4 right-4 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+              className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
               onClick={() => {
                 setSelectedImage(null);
                 toggleHeaderFooter(true);
               }}
+              style={{ top: 12, right: 12, zIndex: 10 }}
+              title="Close"
             >
-              <X className="w-8 h-8" />
+              <X className="w-5 h-5 sm:w-8 sm:h-8" />
             </button>
-            
             {/* Navigation arrows */}
             {filteredImages.length > 1 && (
               <>
                 {/* Previous button */}
                 <button
-                  onClick={(e) => {
+                  onClick={e => {
                     e.stopPropagation();
                     goToPreviousImage();
                   }}
-                  className="absolute left-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                  className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                   title="Previous image (←)"
+                  style={{ left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10 }}
                 >
-                  <ChevronLeft className="w-8 h-8" />
+                  <ChevronLeft className="w-5 h-5 sm:w-8 sm:h-8" />
                 </button>
-                
                 {/* Next button */}
                 <button
-                  onClick={(e) => {
+                  onClick={e => {
                     e.stopPropagation();
                     goToNextImage();
                   }}
-                  className="absolute right-4 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white hover:bg-black/70 transition-colors duration-200"
+                  className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
                   title="Next image (→)"
+                  style={{ right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10 }}
                 >
-                  <ChevronRight className="w-8 h-8" />
+                  <ChevronRight className="w-5 h-5 sm:w-8 sm:h-8" />
                 </button>
               </>
             )}
-            
             {/* Image counter */}
             {filteredImages.length > 1 && (
-              <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/20 text-white text-sm">
+              <div className="absolute px-3 py-1 sm:px-4 sm:py-2 rounded-full bg-black/40 text-white text-xs sm:text-sm shadow-lg" style={{ top: 12, left: 12, zIndex: 10 }}>
                 {getCurrentImageIndex() + 1} / {filteredImages.length}
               </div>
             )}
-            
-            <div className="absolute bottom-4 right-4 flex space-x-2">
+            {/* Download and Rotate buttons at bottom-right with more spacing */}
+            <div className="absolute flex space-x-3 sm:space-x-6" style={{ bottom: 12, right: 20, zIndex: 10 }}>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  // Try native sharing first
-                  if (typeof navigator.share === 'function') {
-                    handleShare('', selectedImage.imageUrl, e);
-                  } else {
-                    // Fall back to custom share menu
-                    setShareMenu({
-                      isOpen: true,
-                      imageUrl: selectedImage.imageUrl,
-                      position: {
-                        top: rect.top - 200,
-                        left: rect.left - 200
-                      }
-                    });
-                  }
-                }}
-                className="p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
-              >
-                <Share2 className="w-6 h-6" />
-              </button>
-              <button
-                onClick={(e) => {
+                onClick={e => {
                   e.stopPropagation();
                   handleDownload(selectedImage.imageUrl);
                 }}
-                className="p-2 rounded-full bg-black/10 text-white hover:bg-black/70 transition-colors duration-200 flex items-center gap-2"
+                className="p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                title="Download"
               >
-                <Download className="w-6 h-6" />
+                <Download className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  setRotation(r => (r + 90) % 360);
+                }}
+                className="p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+                title="Rotate image"
+              >
+                <RotateCw className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
             </div>
+            {/* Share button at bottom-left */}
+            <button
+              onClick={e => {
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                if (typeof navigator.share === 'function') {
+                  handleShare('', selectedImage.imageUrl, e);
+                } else {
+                  setShareMenu({
+                    isOpen: true,
+                    imageUrl: selectedImage.imageUrl,
+                    position: {
+                      top: rect.top - 200,
+                      left: rect.left - 200
+                    }
+                  });
+                }
+              }}
+              className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
+              style={{ bottom: 12, left: 12, zIndex: 10 }}
+              title="Share"
+            >
+              <Share2 className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
           </div>
         </div>
       )}

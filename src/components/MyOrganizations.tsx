@@ -294,7 +294,12 @@ const MyOrganizations: React.FC<MyOrganizationsProps> = ({ setShowSignInModal })
                     </p>
                     <div className="mt-4 flex justify-between">
                       <button
-                        onClick={() => handleViewEvents(org)}
+                        onClick={() => {
+                          const path = `/organization/${org.organizationCode}/events`;
+                          console.log(path);
+                          localStorage.setItem('path', path);
+                          handleViewEvents(org);
+                        }}
                         className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                       >
                         View Events
