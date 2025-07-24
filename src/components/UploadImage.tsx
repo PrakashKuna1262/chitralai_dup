@@ -1570,7 +1570,7 @@ const UploadImage = () => {
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
       return 'http://localhost:3001';
     }
-    return '/.netlify/functions';
+    return '/api';  // Changed from /.netlify/functions to /api
   };
 
   // In handleGoogleLink, replace hardcoded URLs with getBackendUrl()
