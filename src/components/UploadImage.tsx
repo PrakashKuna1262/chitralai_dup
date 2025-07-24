@@ -314,15 +314,29 @@ const UploadImage = () => {
         const logoKey = listedObjects.Contents[0].Key;
         const newLogoUrl = `https://${bucketName}.s3.amazonaws.com/${logoKey}`;
         
-        // Test if the URL is accessible
+        // Test if the URL is accessible through our proxy
         try {
-          const response = await fetch(newLogoUrl, { method: 'HEAD' });
+          const proxyUrl = `${getBackendUrl()}/proxy-image?url=${encodeURIComponent(newLogoUrl)}`;
+          const response = await fetch(proxyUrl);
           if (!response.ok) {
             console.error('[Logo Refresh] Logo URL is not accessible:', newLogoUrl, 'Status:', response.status);
             setLogoUrl(null);
           } else {
             console.log('[Logo Refresh] Logo URL is accessible:', newLogoUrl);
             setLogoUrl(newLogoUrl);
+            
+            // Cache the logo in localStorage
+            try {
+              const blob = await response.blob();
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                localStorage.setItem('cachedLogoDataUrl', reader.result as string);
+                console.log('[Logo Refresh] Logo cached in localStorage');
+              };
+              reader.readAsDataURL(blob);
+            } catch (e) {
+              console.error('[Logo Refresh] Failed to cache logo:', e);
+            }
           }
         } catch (fetchError) {
           console.error('[Logo Refresh] Error testing logo URL accessibility:', fetchError);
@@ -1592,10 +1606,7 @@ const UploadImage = () => {
     if (updatingIntervalRef.current) clearInterval(updatingIntervalRef.current);
     if (fillIntervalRef.current) clearInterval(fillIntervalRef.current);
     setUpdatingDots('');
-    // Start animated dots
-    updatingIntervalRef.current = setInterval(() => {
-      setUpdatingDots(prev => prev.length < 3 ? prev + '.' : '');
-    }, 500);
+
     // Start blue fill animation (10% per second up to 75%)
     let fill = 0;
     fillIntervalRef.current = setInterval(() => {
@@ -1998,7 +2009,7 @@ const UploadImage = () => {
               </div>
               {/* Drive access note */}
               {/* Upload type selector - now with Drive button */}
-              <div className="flex justify-center space-x-4 w-full max-w-md mb-4">
+              <div className="flex justify-center space-x-2 w-full max-w-md mb-4">
                 <button
                   onClick={() => setUploadType('photos')}
                   className={`px-4 py-2 rounded-lg ${uploadType === 'photos' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'} transition-colors duration-200 font-semibold border-2 ${uploadType === 'photos' ? 'border-blue-700' : 'border-gray-300'}`}
@@ -2023,24 +2034,6 @@ const UploadImage = () => {
               {uploadType === 'drive' && (
                 <>
                   {/* Drive upload progress bar above the note, never below the button, and disappears immediately on QR modal */}
-                  {(isDriveUploading && !showQRModal) && (
-                    <div className="w-full max-w-md mx-auto mb-2">
-                      <div className="relative h-4 bg-blue-200 rounded-full overflow-hidden flex items-center">
-                        <div
-                          className="h-full bg-blue-500 rounded-full transition-all duration-500"
-                          style={{ width: `${driveFillProgress}%`, transition: 'width 0.2s linear' }}
-                        />
-                        {/* Centered spinner and percentage */}
-                        <span className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 select-none" style={{zIndex:2}}>
-                          <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="4" opacity="0.2" />
-                            <path d="M22 12a10 10 0 0 1-10 10" stroke="#fff" strokeWidth="4" strokeLinecap="round" />
-                          </svg>
-                          <span className="text-xs text-white font-semibold">{Math.round(driveFillProgress)}%</span>
-                        </span>
-                      </div>
-                    </div>
-                  )}
                   <div className="w-full max-w-md mb-1">
                     <div className="bg-blue-100 border-l-4 border-blue-500 text-blue-900 p-2 rounded text-sm flex items-center gap-2 shadow-sm">
                       <AlertCircle className="w-4 h-4 text-blue-600" />
@@ -2063,18 +2056,37 @@ const UploadImage = () => {
                         onClick={handleGoogleLink}
                         disabled={isDriveUploading && !showQRModal}
                         className="w-full h-full px-4 py-2 relative overflow-hidden rounded-lg font-medium flex items-center justify-center gap-2 border-2 bg-blue-600 text-white border-blue-600 transition-colors duration-200"
-                        style={{
-                          position: 'relative',
-                          overflow: 'hidden',
-                        }}
                       >
                         <span className="relative z-10 flex items-center gap-2 text-white">
                           {isDriveUploading && !showQRModal ? 'Uploading...' : 'Upload'}
                         </span>
                       </button>
-                      {/* Removed the blue progress bar below the input bar */}
                     </div>
                   </div>
+
+                  {/* Progress bar below the upload button */}
+                  {(isDriveUploading && !showQRModal) && (
+                    <div className="w-full max-w-md mx-auto mb-4">
+                      <div className="relative h-4 bg-blue-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                          style={{ width: `${driveFillProgress}%`, transition: 'width 0.2s linear' }}
+                        />
+                        {/* Centered spinner and percentage */}
+                        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-2">
+                          <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" stroke="#1a56db" strokeWidth="4" opacity="0.2" />
+                            <path d="M22 12a10 10 0 0 1-10 10" stroke="#1a56db" strokeWidth="4" strokeLinecap="round" />
+                          </svg>
+                          <span className="text-xs text-blue-700 font-semibold">{Math.round(driveFillProgress)}%</span>
+                        </div>
+                      </div>
+                      {/* Optional: Add status text below progress bar */}
+                      <div className="text-sm text-blue-600 text-center mt-2">
+                        Processing {dualProgress?.currentStage === 'optimization' ? 'images' : 'upload'}...
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
