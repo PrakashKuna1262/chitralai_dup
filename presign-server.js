@@ -22,7 +22,9 @@ app.use(cors({
   origin: [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
-    'https://chitra.netlify.app'
+    'https://chitra.netlify.app',
+    'https://chitralai.in', // Added production domain
+    'http://localhost:3001', // If frontend runs on 3001 locally
   ],
   credentials: true
 }));
@@ -486,6 +488,18 @@ app.post('/drive-list', async (req, res) => {
         Key: { eventId: eventId } // <-- Use eventId as the key
       }));
       const event = getResp.Item || {};
+      // Helper to convert size/unit to bytes
+      const toBytes = (size, unit) => {
+        if (!size || !unit) return 0;
+        if (unit === 'GB') return size * 1024 * 1024 * 1024;
+        return size * 1024 * 1024;
+      };
+      // Get previous totals from DB and convert to bytes
+      const prevOriginalBytes = toBytes(event.totalImageSize, event.totalImageSizeUnit);
+      const prevCompressedBytes = toBytes(event.totalCompressedSize, event.totalCompressedSizeUnit);
+      // Add new batch
+      const newTotalOriginalBytes = prevOriginalBytes + totalOriginalBytes;
+      const newTotalCompressedBytes = prevCompressedBytes + totalCompressedBytes;
       // Convert to MB/GB for display
       const bytesToMB = (bytes) => Number((bytes / (1024 * 1024)).toFixed(2));
       const bytesToGB = (bytes) => Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
@@ -496,38 +510,20 @@ app.post('/drive-list', async (req, res) => {
         }
         return { size: mb, unit: 'MB' };
       };
-      // Add to existing totalImageSize (convert to bytes first if needed)
-      let prevSavedBytes = 0;
-      if (event.totalImageSizeBytes !== undefined) {
-        prevSavedBytes = event.totalImageSizeBytes;
-      }
-      const batchSavedBytes = totalOriginalBytes - totalCompressedBytes;
-      const newTotalSavedBytes = prevSavedBytes + batchSavedBytes;
-      const { size, unit } = convertToAppropriateUnit(newTotalSavedBytes);
-      // Add to existing totalCompressedSize (sum of all compressed sizes)
-      let prevCompressedBytes = 0;
-      if (event.totalCompressedSizeBytes !== undefined) {
-        prevCompressedBytes = event.totalCompressedSizeBytes;
-      } else if (event.totalCompressedSize && event.totalCompressedSizeUnit) {
-        if (event.totalCompressedSizeUnit === 'GB') {
-          prevCompressedBytes = event.totalCompressedSize * 1024 * 1024 * 1024;
-        } else {
-          prevCompressedBytes = event.totalCompressedSize * 1024 * 1024;
-        }
-      }
-      const newTotalCompressedBytes = prevCompressedBytes + totalCompressedBytes;
-      const { size: compressedSize, unit: compressedUnit } = convertToAppropriateUnit(newTotalCompressedBytes);
+      // Use accumulated values for total and compressed size
+      const { size: totalImageSize, unit: totalImageSizeUnit } = convertToAppropriateUnit(newTotalOriginalBytes);
+      const { size: totalCompressedSize, unit: totalCompressedSizeUnit } = convertToAppropriateUnit(newTotalCompressedBytes);
       const newPhotoCount = (event.photoCount || 0) + uploadResults.length;
       await docClient.send(new UpdateCommand({
         TableName: 'Events',
         Key: { eventId: eventId }, // <-- Use eventId as the key
-        UpdateExpression: 'SET photoCount = :pc, totalImageSize = :tis, totalImageSizeUnit = :unit, totalCompressedSize = :tcs, totalCompressedSizeUnit = :cunit',
+        UpdateExpression: 'SET photoCount = :pc, totalImageSize = :tis, totalImageSizeUnit = :tisUnit, totalCompressedSize = :tcs, totalCompressedSizeUnit = :tcsUnit',
         ExpressionAttributeValues: {
           ':pc': newPhotoCount,
-          ':tis': size,
-          ':unit': unit,
-          ':tcs': compressedSize,
-          ':cunit': compressedUnit
+          ':tis': totalImageSize,
+          ':tisUnit': totalImageSizeUnit,
+          ':tcs': totalCompressedSize,
+          ':tcsUnit': totalCompressedSizeUnit
         }
       }));
     } catch (err) {
@@ -555,6 +551,58 @@ app.post('/events/update-image-sizes', async (req, res) => {
   } catch (err) {
     console.error('Error updating event in DynamoDB:', err);
     res.status(500).json({ error: 'Failed to update event', details: err.message });
+  }
+});
+
+// New endpoint to update event image sizes with provided data
+app.post('/events/update-image-sizes-accurate', async (req, res) => {
+  const { eventId, images } = req.body;
+  if (!eventId || !Array.isArray(images)) {
+    return res.status(400).json({ error: 'Missing eventId or images array' });
+  }
+
+  try {
+    // Sum up original and compressed sizes from the provided images array
+    let totalOriginalBytes = 0;
+    let totalCompressedBytes = 0;
+    for (const img of images) {
+      totalOriginalBytes += Number(img.originalSize) || 0;
+      totalCompressedBytes += Number(img.compressedSize) || 0;
+    }
+    // Convert to MB/GB for display
+    const bytesToMB = (bytes) => Number((bytes / (1024 * 1024)).toFixed(2));
+    const bytesToGB = (bytes) => Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
+    const convertToAppropriateUnit = (bytes) => {
+      const mb = bytesToMB(bytes);
+      if (mb >= 1024) {
+        return { size: bytesToGB(bytes), unit: 'GB' };
+      }
+      return { size: mb, unit: 'MB' };
+    };
+    const { size: totalImageSize, unit: totalImageSizeUnit } = convertToAppropriateUnit(totalOriginalBytes);
+    const { size: totalCompressedSize, unit: totalCompressedSizeUnit } = convertToAppropriateUnit(totalCompressedBytes);
+    // Update the event in DynamoDB
+    await docClient.send(new UpdateCommand({
+      TableName: 'Events',
+      Key: { eventId },
+      UpdateExpression: 'SET totalImageSize = :tis, totalImageSizeUnit = :tisUnit, totalCompressedSize = :tcs, totalCompressedSizeUnit = :tcsUnit',
+      ExpressionAttributeValues: {
+        ':tis': totalImageSize,
+        ':tisUnit': totalImageSizeUnit,
+        ':tcs': totalCompressedSize,
+        ':tcsUnit': totalCompressedSizeUnit
+      }
+    }));
+    res.status(200).json({
+      success: true,
+      totalImageSize,
+      totalImageSizeUnit,
+      totalCompressedSize,
+      totalCompressedSizeUnit
+    });
+  } catch (err) {
+    console.error('Error updating event image sizes:', err);
+    res.status(500).json({ error: 'Failed to update event image sizes', details: err.message });
   }
 });
 

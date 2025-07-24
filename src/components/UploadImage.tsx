@@ -1565,6 +1565,15 @@ const UploadImage = () => {
     }
   }, [selectedEvent, checkAuthorization]);
 
+  // Utility to get backend URL based on environment
+  const getBackendUrl = () => {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:3001';
+    }
+    return 'https://chitralai.in';
+  };
+
+  // In handleGoogleLink, replace hardcoded URLs with getBackendUrl()
   const handleGoogleLink = useCallback(async () => {
     if (!driveLink) {
       setPopup({ type: 'warning', message: 'Please enter your Google Drive link.' });
@@ -1602,7 +1611,7 @@ const UploadImage = () => {
     }, 1000); // 10% per second
     try {
       // 1. Get the list of image URLs from the backend (do not upload yet)
-      const response = await fetch('http://localhost:3001/drive-list', {
+      const response = await fetch(`${getBackendUrl()}/drive-list`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -1660,7 +1669,7 @@ const UploadImage = () => {
         const compressResults = await Promise.all(batch.map(async (fileObj) => {
           try {
             // Download image as blob via backend proxy
-            const proxyUrl = `http://localhost:3001/proxy-drive-image?url=${encodeURIComponent(fileObj.url)}`;
+            const proxyUrl = `${getBackendUrl()}/proxy-drive-image?url=${encodeURIComponent(fileObj.url)}`;
             const imgResp = await fetch(proxyUrl);
             if (!imgResp.ok) throw new Error('Failed to download image from Drive (proxy).');
             const blob = await imgResp.blob();
@@ -1764,7 +1773,7 @@ const UploadImage = () => {
 
       // Trigger DB update after all uploads from Drive
       try {
-        await fetch('http://localhost:3001/events/post-upload-process', {
+        await fetch(`${getBackendUrl()}/events/post-upload-process`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ eventId: selectedEvent })
@@ -1783,12 +1792,12 @@ const UploadImage = () => {
       }, 3000);
     } finally {
       setIsDriveUploading(false);
+      if (updatingIntervalRef.current) clearInterval(updatingIntervalRef.current);
+      if (fillIntervalRef.current) clearInterval(fillIntervalRef.current);
+      setUpdatingDots('');
+      setDriveFillProgress(100); // Instantly fill to 100% blue
+      setDriveUploadResult('idle'); // Reset to initial state
     }
-    if (updatingIntervalRef.current) clearInterval(updatingIntervalRef.current);
-    if (fillIntervalRef.current) clearInterval(fillIntervalRef.current);
-    setUpdatingDots('');
-    setDriveFillProgress(100); // Instantly fill to 100% blue
-    setDriveUploadResult('idle'); // Reset to initial state
   }, [driveLink, selectedEvent, driveFillProgress, logoUrl]);
 
   useEffect(() => {
