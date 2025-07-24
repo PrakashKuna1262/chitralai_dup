@@ -110,7 +110,7 @@ const EventDashboard = (props: EventDashboardProps) => {
     const [newEvent, setNewEvent] = useState<Event>({ id: '', name: '', date: '' });
     const [coverImagePreview, setCoverImagePreview] = useState<string | null>(null);
 
-    const [stats, setStats] = useState({ eventCount: 0, photoCount: 0, videoCount: 0, guestCount: 0 });
+    const [stats, setStats] = useState({ eventCount: 0, photoCount: 0, videoCount: 0, guestCount: 0, attendeeCount: 0 });
     const [isLoading, setIsLoading] = useState(false);
     const [events, setEvents] = useState<EventData[]>([]);
     const [showAllEvents, setShowAllEvents] = useState(true);
@@ -323,7 +323,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                     eventCount: allEvents.length,
                     photoCount: allEvents.reduce((sum, event) => sum + (event.photoCount || 0), 0),
                     videoCount: allEvents.reduce((sum, event) => sum + (event.videoCount || 0), 0),
-                    guestCount: allEvents.reduce((sum, event) => sum + (event.guestCount || 0), 0)
+                    guestCount: allEvents.reduce((sum, event) => sum + (event.guestCount || 0), 0),
                 };
                 
                 // Check if stats actually changed before updating state to prevent unnecessary renders
@@ -335,7 +335,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                     
                 if (statsChanged) {
                     console.log('Statistics updated:', newStats);
-                    setStats(newStats);
+                    setStats(prev => ({ ...newStats, attendeeCount: prev.attendeeCount }));
                 }
                 
                 // Check if events have changed before updating state
@@ -374,7 +374,8 @@ const EventDashboard = (props: EventDashboardProps) => {
                 eventCount: 0,
                 photoCount: 0,
                 videoCount: 0,
-                guestCount: 0
+                guestCount: 0,
+                attendeeCount: 0
             });
         }
     };
@@ -1100,6 +1101,41 @@ const EventDashboard = (props: EventDashboardProps) => {
       return () => document.removeEventListener('mousedown', handleClick);
     }, [showMobileSortDropdown]);
 
+    // At the top of the EventDashboard component, after hooks, add:
+    const attendeeCount = React.useMemo(() => {
+      const val = localStorage.getItem('attendeeCount');
+      return val && !isNaN(Number(val)) ? Number(val) : 0;
+    }, [userProfile]);
+
+    useEffect(() => {
+      if (!userProfile?.organizationCode) {
+        setStats(prev => ({ ...prev, attendeeCount: 0 }));
+        return;
+      }
+      const fetchAttendeeCount = async () => {
+        try {
+          const { docClientPromise, ATTENDEE_ORG_TABLE } = await import('../config/dynamodb');
+          const { ScanCommand } = await import('@aws-sdk/lib-dynamodb');
+          const ddbDocClient = await docClientPromise;
+          const command = new ScanCommand({
+            TableName: ATTENDEE_ORG_TABLE,
+            FilterExpression: 'organizationCode = :orgCode',
+            ExpressionAttributeValues: {
+              ':orgCode': userProfile.organizationCode
+            }
+          });
+          const response = await ddbDocClient.send(command);
+          const userIds = response.Items ? response.Items.map((item: any) => item.userId) : [];
+          const uniqueUserIds = Array.from(new Set(userIds));
+          setStats(prev => ({ ...prev, attendeeCount: uniqueUserIds.length }));
+        } catch (error) {
+          console.error('Error fetching attendee count:', error);
+          setStats(prev => ({ ...prev, attendeeCount: 0 }));
+        }
+      };
+      fetchAttendeeCount();
+    }, [userProfile?.organizationCode]);
+
     return (
         <div className={`relative bg-blue-45 flex flex-col pt-16 sm:pt-16 ${events.length === 0 ? 'h-[calc(100vh-70px)]' : 'min-h-screen'}`}>
             <div className="relative z-10 container mx-auto px-4 py-4 sm:py-6 flex-grow">
@@ -1202,118 +1238,119 @@ const EventDashboard = (props: EventDashboardProps) => {
                     </div>
 
                     {/* Organization Info Card - Only show if organization exists, only in md+ */}
-                    {userProfile?.organizationName && (
+                  {userProfile?.organizationName && (
                       <div className="hidden md:block w-1/3">
-                        <div className="h-full p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg shadow-md flex items-center">
-                          <div className="relative flex-shrink-0">
-                            <div 
-                              className={`relative h-12 w-12 rounded-full overflow-hidden border-2 ${isUploadingOrgLogo ? 'border-blue-400' : 'border-blue-200'} shadow-md group cursor-pointer transition-all duration-200 hover:border-blue-400`}
-                              onClick={!isUploadingOrgLogo ? handleLogoClick : undefined}
-                              title={isUploadingOrgLogo ? 'Uploading...' : 'Change organization logo'}
-                            >
-                              {isUploadingOrgLogo ? (
-                                <div className="h-full w-full bg-blue-50 flex items-center justify-center">
-                                  <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
-                                </div>
-                              ) : userProfile?.organizationLogo ? (
-                                <img 
-                                  src={userProfile.organizationLogo || '/pixigologo.svg'} 
-                                  alt="Organization Logo" 
-                                  className="h-full w-full object-cover group-hover:opacity-90 transition-opacity"
-                                />
-                              ) : (
-                                <div className="h-full w-full bg-blue-100 flex items-center justify-center group-hover:bg-blue-200 transition-colors">
-                                  <Camera className="w-5 h-5 text-blue-500" />
-                                </div>
-                              )}
-                              <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100">
-                                <Camera className="w-4 h-4 text-white" />
+                      <div className="h-full p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg shadow-md flex items-center">
+                        <div className="relative flex-shrink-0">
+                          <div 
+                            className={`relative h-12 w-12 rounded-full overflow-hidden border-2 ${isUploadingOrgLogo ? 'border-blue-400' : 'border-blue-200'} shadow-md group cursor-pointer transition-all duration-200 hover:border-blue-400`}
+                            onClick={!isUploadingOrgLogo ? handleLogoClick : undefined}
+                            title={isUploadingOrgLogo ? 'Uploading...' : 'Change organization logo'}
+                          >
+                            {isUploadingOrgLogo ? (
+                              <div className="h-full w-full bg-blue-50 flex items-center justify-center">
+                                <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
                               </div>
-                            </div>
-                            <input
-                              type="file"
-                              className="hidden"
-                              accept="image/*"
-                              onChange={handleOrgLogoChange}
-                              disabled={isUploadingOrgLogo}
-                              id="org-logo-upload"
-                            />
-                          </div>
-                          <div className="ml-3 overflow-hidden flex-1">
-                            <span className="text-xs text-gray-600 font-medium truncate">Organization</span>
-                            {isEditingOrgName ? (
-                              <div className="flex items-center gap-2 w-full">
-                                <input
-                                  type="text"
-                                  value={editedOrgName}
-                                  onChange={(e) => setEditedOrgName(e.target.value)}
-                                  className="text-sm font-semibold text-blue-900 bg-white border border-blue-300 rounded px-2 py-1 focus:outline-none focus:border-blue-500 flex-1"
-                                  autoFocus
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      handleOrgNameUpdate();
-                                    } else if (e.key === 'Escape') {
-                                      cancelOrgNameEdit();
-                                    }
-                                  }}
-                                />
-                              </div>
+                            ) : userProfile?.organizationLogo ? (
+                              <img 
+                                src={userProfile.organizationLogo || '/pixigologo.svg'} 
+                                alt="Organization Logo" 
+                                className="h-full w-full object-cover group-hover:opacity-90 transition-opacity"
+                              />
                             ) : (
-                              <div className="flex items-center justify-between">
-                                <h2 className="text-sm font-semibold text-blue-900 truncate">
-                                  {userProfile.organizationName}
-                                </h2>
-                                <button
-                                  onClick={handleOrgNameEdit}
-                                  className="p-1 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50 ml-1"
-                                  title="Edit organization name"
-                                >
-                                  <Edit className="w-3 h-3" />
-                                </button>
+                              <div className="h-full w-full bg-blue-100 flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                                <Camera className="w-5 h-5 text-blue-500" />
                               </div>
                             )}
+                            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 flex items-center justify-center transition-all duration-200 opacity-0 group-hover:opacity-100">
+                              <Camera className="w-4 h-4 text-white" />
+                            </div>
                           </div>
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept="image/*"
+                            onChange={handleOrgLogoChange}
+                            disabled={isUploadingOrgLogo}
+                            id="org-logo-upload"
+                          />
+                        </div>
+                        <div className="ml-3 overflow-hidden flex-1">
+                          <span className="text-xs text-gray-600 font-medium truncate">Organization</span>
                           {isEditingOrgName ? (
-                            <div className="ml-2 flex items-center gap-1">
-                              <button
-                                onClick={handleOrgNameUpdate}
-                                disabled={!editedOrgName.trim() || isUpdatingOrgName}
-                                className="p-1.5 bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Save Name"
-                              >
-                                {isUpdatingOrgName ? (
-                                  <RefreshCw className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <CheckCircle className="w-3 h-3" />
-                                )}
-                              </button>
-                              <button
-                                onClick={cancelOrgNameEdit}
-                                disabled={isUpdatingOrgName}
-                                className="p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Cancel"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
+                            <div className="flex items-center gap-2 w-full">
+                              <input
+                                type="text"
+                                value={editedOrgName}
+                                onChange={(e) => setEditedOrgName(e.target.value)}
+                                className="text-sm font-semibold text-blue-900 bg-white border border-blue-300 rounded px-2 py-1 focus:outline-none focus:border-blue-500 flex-1"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    handleOrgNameUpdate();
+                                  } else if (e.key === 'Escape') {
+                                    cancelOrgNameEdit();
+                                  }
+                                }}
+                              />
                             </div>
                           ) : (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setShowQRCode(true);
-                              }}
-                              className="ml-auto p-2 text-blue-600 hover:bg-blue-100 rounded-full transition-colors"
-                              title="Show QR Code"
-                            >
-                              <QrCode className="w-4 h-4" />
-                            </button>
+                            <div className="flex items-center justify-between">
+                                <div className="flex flex-col">
+                                  <h2 className="text-sm font-semibold text-blue-900 truncate">{userProfile.organizationName}</h2>
+                                  <div className="text-xs text-blue-700 mt-1 font-semibold">Members Joined: {stats.attendeeCount}</div>
+                                </div>
+                              <button
+                                onClick={handleOrgNameEdit}
+                                className="p-1 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50 ml-1"
+                                title="Edit organization name"
+                              >
+                                <Edit className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
+                        {isEditingOrgName ? (
+                          <div className="ml-2 flex items-center gap-1">
+                            <button
+                              onClick={handleOrgNameUpdate}
+                              disabled={!editedOrgName.trim() || isUpdatingOrgName}
+                              className="p-1.5 bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Save Name"
+                            >
+                              {isUpdatingOrgName ? (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <CheckCircle className="w-3 h-3" />
+                              )}
+                            </button>
+                            <button
+                              onClick={cancelOrgNameEdit}
+                              disabled={isUpdatingOrgName}
+                              className="p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Cancel"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowQRCode(true);
+                            }}
+                            className="ml-auto p-2 text-blue-600 hover:bg-blue-100 rounded-full transition-colors"
+                            title="Show QR Code"
+                          >
+                            <QrCode className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
+                    </div>
                   {/* Organization Info Card - Only show if organization exists, only in mobile */}
-                  {userProfile?.organizationName && (
+                    {userProfile?.organizationName && (
                     <div className="block md:hidden mt-2 w-full">
                       <div className="h-full p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg shadow-md flex items-center">
                         <div className="relative flex-shrink-0">
@@ -1371,9 +1408,10 @@ const EventDashboard = (props: EventDashboardProps) => {
                             </div>
                           ) : (
                             <div className="flex items-center justify-between">
-                              <h2 className="text-sm font-semibold text-blue-900 truncate">
-                                {userProfile.organizationName}
-                              </h2>
+                              <div className="flex flex-col">
+                                <h2 className="text-sm font-semibold text-blue-900 truncate">{userProfile.organizationName}</h2>
+                                <div className="text-xs text-blue-700 mt-1 font-semibold">Members Joined: {stats.attendeeCount}</div>
+                              </div>
                               <button
                                 onClick={handleOrgNameEdit}
                                 className="p-1 text-gray-500 hover:text-blue-600 rounded-full hover:bg-blue-50 ml-1"
@@ -1420,8 +1458,8 @@ const EventDashboard = (props: EventDashboardProps) => {
                           </button>
                         )}
                       </div>
-                    </div>
-                  )}
+                      </div>
+                    )}
                 </div>
 
                 {/* QR Code Modal */}

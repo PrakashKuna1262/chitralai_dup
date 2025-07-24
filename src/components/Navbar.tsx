@@ -4,6 +4,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
 import { storeUserCredentials, getUserByEmail, queryUserByEmail } from '../config/dynamodb';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { UserContext } from '../App';
 import PhoneVerification from './PhoneVerification';
 import { s3ClientPromise, getOrganizationLogoPath, getOrganizationLogoUrl, ensureFolderStructure, getOrganizationFolderPath, validateEnvVariables } from '../config/aws';
@@ -11,6 +12,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { setupTokenRefresh, clearTokenRefresh, shouldRefreshToken } from '../config/auth';
 // ProfileDropdown is now only used in the desktop view
 import ProfileDropdown from './ProfileDropdown';
+import { docClientPromise, ATTENDEE_ORG_TABLE } from '../config/dynamodb';
 
 interface NavbarProps {
   mobileMenuOpen: boolean;
@@ -87,6 +89,41 @@ const Navbar: React.FC<NavbarProps> = ({
   const removeAuthCookie = () => {
     document.cookie = 'auth_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; secure; samesite=strict';
   };
+
+  // Function to count attendees in an organization (local to Navbar)
+  const countAttendeesInOrganization = async (organizationCode: string): Promise<number> => {
+    const ddbDocClient = await docClientPromise;
+    try {
+      const command = new ScanCommand({
+        TableName: ATTENDEE_ORG_TABLE,
+        FilterExpression: 'organizationCode = :orgCode',
+        ExpressionAttributeValues: {
+          ':orgCode': organizationCode
+        }
+      });
+      const response = await ddbDocClient.send(command);
+      // Count unique userIds (in case of duplicates)
+      const userIds = response.Items ? response.Items.map((item: any) => item.userId) : [];
+      const uniqueUserIds = Array.from(new Set(userIds));
+      return uniqueUserIds.length;
+    } catch (error) {
+      console.error('Error counting attendees in organization:', error);
+      return 0;
+    }
+  };
+
+  // Example usage: fetch attendee count when organizationCode is available
+  // const [attendeeCount, setAttendeeCount] = useState<number | null>(null);
+  // useEffect(() => {
+  //   const fetchCount = async () => {
+  //     const orgCode = ...; // get organizationCode from userProfile or context
+  //     if (orgCode) {
+  //       const count = await countAttendeesInOrganization(orgCode);
+  //       setAttendeeCount(count);
+  //     }
+  //   };
+  //   fetchCount();
+  // }, [organizationCode]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -465,6 +502,29 @@ const Navbar: React.FC<NavbarProps> = ({
             navigate('/attendee-dashboard');
           }
         }
+      } else {
+        // NEW LOGIC: Check user event count and redirect accordingly
+        try {
+          const { getUserEvents } = await import('../config/eventStorage');
+          const userEvents = await getUserEvents(email);
+          if (userEvents && userEvents.length > 0) {
+            navigate('/events');
+          } else {
+            navigate('/'); // Go to Hero/home if no events
+          }
+        } catch (err) {
+          console.error('Error fetching user events after login:', err);
+          navigate('/');
+        }
+      }
+      if (userData.organizationCode) {
+        try {
+          const count = await countAttendeesInOrganization(userData.organizationCode);
+          localStorage.setItem('attendeeCount', count.toString());
+        } catch (error) {
+          console.error('Error fetching attendee count at login:', error);
+          localStorage.setItem('attendeeCount', '0');
+        }
       }
     } catch (error) {
       console.error('Error in sign in process:', error);
@@ -709,6 +769,15 @@ const Navbar: React.FC<NavbarProps> = ({
           } else {
             navigate('/attendee-dashboard');
           }
+        }
+      }
+      if (userData.organizationCode) {
+        try {
+          const count = await countAttendeesInOrganization(userData.organizationCode);
+          localStorage.setItem('attendeeCount', count.toString());
+        } catch (error) {
+          console.error('Error fetching attendee count at login:', error);
+          localStorage.setItem('attendeeCount', '0');
         }
       }
     } catch (error) {
