@@ -1340,7 +1340,7 @@ console.log(`User ${userEmail} downloading image`);
               </div>
             </form>
             
-            {eventDetails && (
+            {eventDetails && !selfieUrl && (
               <div className="border border-blue-200 bg-blue-50 p-3 rounded-lg mt-4">
                 <h3 className="font-semibold text-blue-800 text-sm">{eventDetails.name}</h3>
                 <p className="text-blue-600 text-xs">
