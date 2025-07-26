@@ -3,7 +3,7 @@ import { ListObjectsV2Command, DeleteObjectCommand, GetObjectCommand } from '@aw
 import { Upload } from '@aws-sdk/lib-storage';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, ChevronLeft, ChevronRight, RotateCw, Share2, CheckCircle } from 'lucide-react';
+import { Camera, X, ArrowLeft, Download, Upload as UploadIcon, Copy, UserPlus, Facebook, Instagram, Twitter, Youtube, ChevronLeft, ChevronRight, RotateCw, Share2, CheckCircle, Mail, MessageCircle, Linkedin } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getEventById, updateEventData, convertToAppropriateUnit } from '../config/eventStorage';
@@ -101,6 +101,15 @@ const FaceThumbnail: React.FC<{
   );
 };
 
+interface ShareMenuState {
+  isOpen: boolean;
+  imageUrl: string;
+  position: {
+    top: number;
+    left: number;
+  };
+}
+
 const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSelect }) => {
   const navigate = useNavigate();
   const [images, setImages] = useState<EventImage[]>([]);
@@ -137,6 +146,12 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
 
   const qrCodeRef = useRef<SVGSVGElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  const [shareMenu, setShareMenu] = useState<ShareMenuState>({
+    isOpen: false,
+    imageUrl: '',
+    position: { top: 0, left: 0 }
+  });
 
   // Reset rotation when image changes or modal closes
   useEffect(() => {
@@ -548,6 +563,107 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
       return () => document.removeEventListener('keydown', handleKeyDown);
     }
   }, [selectedImage, images]);
+
+  // Add handleShare function
+  const handleShare = async (platform: string, imageUrl: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+
+    try {
+      // Fetch the image and convert to blob
+      const response = await fetch(imageUrl, {
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+        mode: 'cors',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      const imageFile = new File([blob], 'photo.jpg', { type: blob.type });
+
+      // If Web Share API is supported and platform is not specified (direct share button click)
+      if (typeof navigator.share === 'function' && !platform) {
+        try {
+          await navigator.share({
+            title: 'Check out this photo!',
+            text: 'Photo from Chitralai',
+            files: [imageFile]
+          });
+          setShareMenu(prev => ({ ...prev, isOpen: false }));
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name !== 'AbortError') {
+            console.error('Error sharing file:', err);
+          }
+        }
+      }
+
+      // Fallback to custom share menu for specific platforms
+      const shareUrl = encodeURIComponent(imageUrl);
+      const shareText = encodeURIComponent('Check out this photo!');
+      
+      let shareLink = '';
+      switch (platform) {
+        case 'facebook':
+          shareLink = `https://www.facebook.com/sharer/sharer.php?u=${shareUrl}`;
+          break;
+        case 'twitter':
+          shareLink = `https://twitter.com/intent/tweet?url=${shareUrl}&text=${shareText}`;
+          break;
+        case 'instagram':
+          shareLink = `instagram://library?AssetPath=${shareUrl}`;
+          break;
+        case 'linkedin':
+          shareLink = `https://www.linkedin.com/sharing/share-offsite/?url=${shareUrl}`;
+          break;
+        case 'whatsapp':
+          shareLink = `https://api.whatsapp.com/send?text=${shareText}%20${shareUrl}`;
+          break;
+        case 'email':
+          shareLink = `mailto:?subject=${shareText}&body=${shareUrl}`;
+          break;
+        case 'copy':
+          try {
+            await navigator.clipboard.writeText(imageUrl);
+            alert('Link copied to clipboard!');
+            setShareMenu(prev => ({ ...prev, isOpen: false }));
+            return;
+          } catch (err) {
+            console.error('Failed to copy link:', err);
+            alert('Failed to copy link');
+          }
+          break;
+      }
+      
+      if (shareLink) {
+        window.open(shareLink, '_blank', 'noopener,noreferrer');
+        setShareMenu(prev => ({ ...prev, isOpen: false }));
+      }
+    } catch (error) {
+      console.error('Error sharing image:', error);
+      alert('Failed to share image. Please try again.');
+    }
+  };
+
+  // Add useEffect for closing share menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (shareMenu.isOpen) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.share-menu')) {
+          setShareMenu(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [shareMenu.isOpen]);
 
   // Helper to get button style for anchoring to image
   const getButtonStyle = (button: 'close' | 'left' | 'right' | 'counter' | 'download' | 'rotate' | 'share', rotation: number) => {
@@ -1028,21 +1144,20 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
               </div>
               {/* Share button at bottom-left */}
               <button
-                onClick={async e => {
+                onClick={e => {
                   e.stopPropagation();
-                  if (navigator.share) {
-                    try {
-                      await navigator.share({
-                        title: 'Event Photo',
-                        url: selectedImage.url,
-                      });
-                    } catch (err) {
-                      // User cancelled or not supported
-                    }
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  if (typeof navigator !== 'undefined' && 'share' in navigator) {
+                    handleShare('', selectedImage.url, e);
                   } else {
-                    navigator.clipboard.writeText(selectedImage.url);
-                    setShowCopySuccess(true);
-                    setTimeout(() => setShowCopySuccess(false), 2000);
+                    setShareMenu({
+                      isOpen: true,
+                      imageUrl: selectedImage.url,
+                      position: {
+                        top: rect.top - 200,
+                        left: rect.left - 200
+                      }
+                    });
                   }
                 }}
                 className="absolute p-2 sm:p-3 rounded-full bg-black/40 text-white hover:bg-black/70 transition-colors duration-200 shadow-lg"
@@ -1158,99 +1273,107 @@ const ViewEvent: React.FC<ViewEventProps> = ({ eventId, selectedEvent, onEventSe
               </button>
               <h3 className="text-xl font-semibold text-gray-900 mb-4">Share Selected Images</h3>
               <p className="mb-4 text-gray-700">You have selected {selectedImages.size} image(s).</p>
-              {/* Share links and copy button will go here */}
-              <div className="flex flex-col gap-2 mb-4 max-h-40 overflow-y-auto">
-                {images.filter(img => selectedImages.has(img.key)).map(img => (
-                  <div key={img.key} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={img.url}
-                      className="flex-1 px-2 py-1 border rounded text-xs bg-gray-100"
-                    />
-                    <button
-                      className="text-blue-500 hover:text-blue-700 text-xs flex items-center"
-                      onClick={() => {
-                        navigator.clipboard.writeText(img.url);
-                        setShowCopiedIndex(img.key);
-                        setTimeout(() => setShowCopiedIndex(null), 3000);
-                      }}
-                    >
-                      {showCopiedIndex === img.key ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-green-500" />
-                          <span className="ml-1 text-green-600 font-semibold">Copied</span>
-                        </>
-                      ) : (
-                        <>Copy</>
-                      )}
-                    </button>
-                  </div>
-                ))}
+              
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <button
+                  onClick={(e) => {
+                    const image = images.find(img => selectedImages.has(img.key));
+                    if (image) {
+                      handleShare('facebook', image.url, e);
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <Facebook className="h-8 w-8 text-blue-600" />
+                  <span className="text-sm mt-1">Facebook</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    const image = images.find(img => selectedImages.has(img.key));
+                    if (image) {
+                      handleShare('instagram', image.url, e);
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <Instagram className="h-8 w-8 text-pink-600" />
+                  <span className="text-sm mt-1">Instagram</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    const image = images.find(img => selectedImages.has(img.key));
+                    if (image) {
+                      handleShare('twitter', image.url, e);
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <Twitter className="h-8 w-8 text-blue-400" />
+                  <span className="text-sm mt-1">Twitter</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    const image = images.find(img => selectedImages.has(img.key));
+                    if (image) {
+                      handleShare('linkedin', image.url, e);
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <Linkedin className="h-8 w-8 text-blue-700" />
+                  <span className="text-sm mt-1">LinkedIn</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    const image = images.find(img => selectedImages.has(img.key));
+                    if (image) {
+                      handleShare('whatsapp', image.url, e);
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <MessageCircle className="h-8 w-8 text-green-500" />
+                  <span className="text-sm mt-1">WhatsApp</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    const image = images.find(img => selectedImages.has(img.key));
+                    if (image) {
+                      handleShare('email', image.url, e);
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <Mail className="h-8 w-8 text-gray-600" />
+                  <span className="text-sm mt-1">Email</span>
+                </button>
               </div>
-              <button
-                className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600 transition mb-4"
-                onClick={() => {
-                  const urls = images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n');
-                  navigator.clipboard.writeText(urls);
-                }}
-              >
-                Copy All Links
-              </button>
-              <div className="my-2 text-center text-gray-500 text-sm">Or share via:</div>
-              <div className="flex gap-3 justify-center mb-2">
-                {/* WhatsApp */}
-                <a
-                  href={`https://wa.me/?text=${encodeURIComponent(images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n'))}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-green-500 hover:bg-green-600 text-white rounded-full p-2 flex items-center justify-center"
-                  title="Share on WhatsApp"
-                >
-                  <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.472-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.149-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.151-.174.2-.298.3-.497.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.5-.669-.51-.173-.008-.372-.01-.571-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.095 3.2 5.076 4.363.709.306 1.262.489 1.694.626.712.227 1.36.195 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.288.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.617h-.001a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.999-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.455 4.436-9.89 9.893-9.89 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.896 6.994c-.003 5.455-4.438 9.89-9.893 9.89m8.413-18.304A11.815 11.815 0 0 0 12.05 0C5.495 0 .06 5.435.058 12.09c0 2.13.557 4.21 1.615 6.033L.057 24l6.063-1.616A11.888 11.888 0 0 0 12.051 24c6.555 0 11.89-5.435 11.893-12.09a11.86 11.86 0 0 0-3.489-8.715"/></svg>
-                </a>
-                {/* Facebook */}
-                <a
-                  href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(Array.from(selectedImages).length === 1 ? images.find(img => selectedImages.has(img.key))?.url || window.location.href : window.location.href)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-2 flex items-center justify-center"
-                  title="Share on Facebook"
-                >
-                  <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M22.675 0h-21.35C.595 0 0 .592 0 1.326v21.348C0 23.408.595 24 1.325 24H12.82v-9.294H9.692v-3.622h3.127V8.413c0-3.1 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.797.143v3.24l-1.918.001c-1.504 0-1.797.715-1.797 1.763v2.313h3.587l-.467 3.622h-3.12V24h6.116c.73 0 1.324-.592 1.324-1.326V1.326C24 .592 23.405 0 22.675 0"/></svg>
-                </a>
-                {/* Twitter/X */}
-                <a
-                  href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n'))}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-blue-400 hover:bg-blue-500 text-white rounded-full p-2 flex items-center justify-center"
-                  title="Share on Twitter"
-                >
-                  <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M24 4.557a9.83 9.83 0 0 1-2.828.775 4.932 4.932 0 0 0 2.165-2.724c-.951.564-2.005.974-3.127 1.195a4.916 4.916 0 0 0-8.38 4.482C7.691 8.095 4.066 6.13 1.64 3.161c-.542.929-.856 2.01-.857 3.17 0 2.188 1.115 4.116 2.823 5.247a4.904 4.904 0 0 1-2.229-.616c-.054 2.281 1.581 4.415 3.949 4.89a4.936 4.936 0 0 1-2.224.084c.627 1.956 2.444 3.377 4.6 3.417A9.867 9.867 0 0 1 0 21.543a13.94 13.94 0 0 0 7.548 2.212c9.057 0 14.009-7.496 14.009-13.986 0-.21 0-.423-.016-.634A9.936 9.936 0 0 0 24 4.557z"/></svg>
-                </a>
-                {/* Web Share API */}
-                {navigator.share && (
-                  <button
-                    className="bg-gray-700 hover:bg-gray-800 text-white rounded-full p-2 flex items-center justify-center"
-                    title="Share via..."
-                    onClick={async () => {
-                      const urls = images.filter(img => selectedImages.has(img.key)).map(img => img.url).join('\n');
-                      try {
-                        await navigator.share({
-                          title: 'Event Photos',
-                          text: `Check out these event photos!`,
-                          url: urls
-                        });
-                      } catch (e) {
-                        // User cancelled or not supported
+
+              {selectedImages.size > 1 && (
+                <div className="text-center text-sm text-gray-500 mb-4">
+                  Note: Only the first selected image will be shared due to platform limitations.
+                </div>
+              )}
+
+              {typeof navigator !== 'undefined' && 'share' in navigator && (
+                <button
+                  className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-2"
+                  onClick={async () => {
+                    try {
+                      const selectedImage = images.find(img => selectedImages.has(img.key));
+                      if (selectedImage) {
+                        await handleShare('', selectedImage.url);
+                        setShowShareModal(false);
                       }
-                    }}
-                  >
-                    <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77l-7.13-4.13c.05-.25.09-.5.09-.77s-.03-.52-.09-.77l7.09-4.11c.54.5 1.25.81 2.01.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .27.04.52.09.77l-7.09 4.11c-.54-.5-1.25-.81-2.01-.81-1.66 0-3 1.34-3 3s1.34 3 3 3c.76 0 1.47-.31 2-.8l7.13 4.13c-.05.23-.08.47-.08.72 0 1.52 1.23 2.75 2.75 2.75s2.75-1.23 2.75-2.75-1.23-2.75-2.75-2.75z"/></svg>
-                  </button>
-                )}
-              </div>
+                    } catch (e) {
+                      // User cancelled or not supported
+                    }
+                  }}
+                >
+                  <Share2 className="w-5 h-5" />
+                  Share via...
+                </button>
+              )}
             </div>
           </div>
         )}

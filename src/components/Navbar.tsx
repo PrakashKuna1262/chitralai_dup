@@ -37,6 +37,19 @@ interface UserProfile {
   organizationCode?: string;
 }
 
+// Add branding to the userData type
+interface UserData {
+  userId: string;
+  email: string;
+  name: string;
+  mobile: string;
+  role: string;
+  organizationName?: string;
+  organizationCode?: string;
+  organizationLogo?: string;
+  branding?: boolean;
+}
+
 const Navbar: React.FC<NavbarProps> = ({ 
   mobileMenuOpen, 
   setMobileMenuOpen,
@@ -410,7 +423,7 @@ const Navbar: React.FC<NavbarProps> = ({
       }
 
       // Store user in DynamoDB
-      const userData = {
+      const userData: UserData = {
         userId: email,
         email: email,
         name: name || '',
@@ -418,7 +431,8 @@ const Navbar: React.FC<NavbarProps> = ({
         role: role,
         organizationName: organizationData?.organizationName,
         organizationCode: organizationCode || undefined,
-        organizationLogo: logoUrl || undefined
+        organizationLogo: logoUrl || undefined,
+        branding: existingUser?.branding !== undefined ? existingUser.branding : false
       };
       // Fetch latest user data from DB and store organization details in localStorage
       try {
@@ -429,6 +443,11 @@ const Navbar: React.FC<NavbarProps> = ({
             organizationCode: latestUser.organizationCode || '',
             organizationLogo: latestUser.organizationLogo || ''
           }));
+          // Store branding and orgLogoDataUrl in localStorage at login
+          const brandingValue = typeof latestUser.branding === 'boolean' ? latestUser.branding : false;
+          localStorage.setItem('branding', JSON.stringify(brandingValue));
+          const orgLogoDataUrl = latestUser.organizationLogo || '';
+          localStorage.setItem('orgLogoDataUrl', orgLogoDataUrl);
         }
       } catch (e) {
         // fallback to userData
@@ -437,6 +456,11 @@ const Navbar: React.FC<NavbarProps> = ({
           organizationCode: userData.organizationCode || '',
           organizationLogo: userData.organizationLogo || ''
         }));
+        // Store branding and orgLogoDataUrl in localStorage at login (fallback)
+        const brandingValue = typeof userData.branding === 'boolean' ? userData.branding : false;
+        localStorage.setItem('branding', JSON.stringify(brandingValue));
+        const orgLogoDataUrl = userData.organizationLogo || '';
+        localStorage.setItem('orgLogoDataUrl', orgLogoDataUrl);
       }
 
       console.log('Storing user data in DynamoDB:', userData);
@@ -538,21 +562,17 @@ const Navbar: React.FC<NavbarProps> = ({
       clearTokenRefresh(tokenRefreshInterval.current);
       tokenRefreshInterval.current = null;
     }
-    
+
     setIsLoggedIn(false);
     setUserProfile(null);
     setUserRole(null);
     setUserEmail(null);
     setNavType(null);
     removeAuthCookie();
-    localStorage.removeItem('googleToken');
-    localStorage.removeItem('userProfile');
-    localStorage.removeItem('userEmail');
-    localStorage.removeItem('userMobile');
-    localStorage.removeItem('pendingAction');
-    localStorage.removeItem('pendingRedirectUrl');
-    localStorage.removeItem('refreshToken');
-    
+
+    // Clear all localStorage items
+    localStorage.clear();
+
     // Navigate to homepage and reload the page
     navigate('/', { replace: true });
     window.location.reload();
@@ -677,7 +697,7 @@ const Navbar: React.FC<NavbarProps> = ({
       }
 
       // Store new user in DynamoDB
-      const userData = {
+      const userData: UserData = {
         userId: email,
         email: email,
         name: name || '',
