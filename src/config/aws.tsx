@@ -126,9 +126,7 @@ export const getOrganizationLogoPath = (userId: string, filename: string): strin
 export const getOrganizationLogoUrl = async (userId: string, filename: string): Promise<string> => {
     const { bucketName } = await validateEnvVariables();
     const s3Client = await s3ClientPromise;
-    const s3Url = `https://${bucketName}.s3.amazonaws.com/${getOrganizationLogoPath(userId, filename)}`;
-    // Use the proxy endpoint instead of direct S3 URL
-    return `/.netlify/functions/proxy-image?url=${encodeURIComponent(s3Url)}`;
+    return `https://${bucketName}.s3.amazonaws.com/${getOrganizationLogoPath(userId, filename)}`;
 };
 
 // Helper function to get folder path for organization
