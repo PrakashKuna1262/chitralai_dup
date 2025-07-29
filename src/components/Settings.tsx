@@ -226,45 +226,7 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Account Section */}
-         
-
-        {/* Notifications Section */}
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2"><Bell className="h-5 w-5" /> Notifications</h2>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3"><Mail className="h-4 w-4 text-gray-400" /> Email Alerts</div>
-              <button className="text-blue-600 hover:underline">Manage</button>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3"><Smartphone className="h-4 w-4 text-gray-400" /> SMS Alerts</div>
-              <button className="text-blue-600 hover:underline">Manage</button>
-            </div>
-          </div>
-        </div>
-
-        {/* Privacy Section */}
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2"><Lock className="h-5 w-5" /> Privacy & Security</h2>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3"><LinkIcon className="h-4 w-4 text-gray-400" /> Connected Accounts</div>
-              <button className="text-blue-600 hover:underline">Manage</button>
-            </div>
-            
-            
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3"><Shield className="h-4 w-4 text-gray-400" /> Session Management</div>
-              <button className="text-blue-600 hover:underline">View</button>
-            </div>
-            <div className="flex items-center gap-3"><a href="/privacy" className="text-blue-600 hover:underline flex items-center"><Shield className="h-4 w-4 mr-1" /> Privacy Policy</a></div>
-            <div className="flex items-center gap-3"><a href="/terms" className="text-blue-600 hover:underline flex items-center"><Shield className="h-4 w-4 mr-1" /> Terms of Service</a></div>
-          </div>
-        </div>
-
-       
-        {/* Support Section */}
+        {/* Branding & Support Section */}
         <div className="bg-white rounded-xl shadow-sm border p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2"><HelpCircle className="h-5 w-5" /> Branding & Support</h2>
           <div className="space-y-4">
@@ -299,6 +261,40 @@ const Settings: React.FC = () => {
               <div className="flex items-center gap-3"><MessageSquare className="h-4 w-4 text-gray-400" /> Send Feedback</div>
               <button className="text-blue-600 hover:underline">Send</button>
             </div>
+          </div>
+        </div>
+
+        {/* Notifications Section */}
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2"><Bell className="h-5 w-5" /> Notifications</h2>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3"><Mail className="h-4 w-4 text-gray-400" /> Email Alerts</div>
+              <button className="text-blue-600 hover:underline">Manage</button>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3"><Smartphone className="h-4 w-4 text-gray-400" /> SMS Alerts</div>
+              <button className="text-blue-600 hover:underline">Manage</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Privacy Section */}
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2"><Lock className="h-5 w-5" /> Privacy & Security</h2>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3"><LinkIcon className="h-4 w-4 text-gray-400" /> Connected Accounts</div>
+              <button className="text-blue-600 hover:underline">Manage</button>
+            </div>
+            
+            
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3"><Shield className="h-4 w-4 text-gray-400" /> Session Management</div>
+              <button className="text-blue-600 hover:underline">View</button>
+            </div>
+            <div className="flex items-center gap-3"><a href="/privacy" className="text-blue-600 hover:underline flex items-center"><Shield className="h-4 w-4 mr-1" /> Privacy Policy</a></div>
+            <div className="flex items-center gap-3"><a href="/terms" className="text-blue-600 hover:underline flex items-center"><Shield className="h-4 w-4 mr-1" /> Terms of Service</a></div>
           </div>
         </div>
       </div>
