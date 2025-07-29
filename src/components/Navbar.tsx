@@ -81,6 +81,38 @@ const Navbar: React.FC<NavbarProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const [navType, setNavType] = useState<'organizer' | 'attendee' | null>(null);
+  
+  // Determine navigation type based on current location and user role
+  useEffect(() => {
+    const determineNavType = () => {
+      const currentPath = location.pathname;
+      const storedUserRole = localStorage.getItem('userRole') || userRole || 'organizer';
+      
+      // If user is on attendee-specific pages, show attendee navigation
+      if (currentPath.includes('/attendee-dashboard') || 
+          currentPath.includes('/my-photos') || 
+          currentPath.includes('/my-organizations') ||
+          currentPath.includes('/my-albums')) {
+        setNavType('attendee');
+      }
+      // If user is on organizer-specific pages, show organizer navigation
+      else if (currentPath.includes('/events') || 
+               currentPath.includes('/upload') ||
+               currentPath.includes('/event-dashboard') ||
+               currentPath.includes('/settings') ||
+               currentPath.includes('/profile')) {
+        setNavType('organizer');
+      }
+      // Default based on user role
+      else if (storedUserRole === 'attendee') {
+        setNavType('attendee');
+      } else {
+        setNavType('organizer');
+      }
+    };
+    
+    determineNavType();
+  }, [location.pathname, userRole]);
   const [scrolled, setScrolled] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTab] = useState<'signin' | 'signup'>('signin');
@@ -240,32 +272,60 @@ const Navbar: React.FC<NavbarProps> = ({
   // Update useEffect to set navType based on current location and user role
   useEffect(() => {
     if (isLoggedIn) {
-      // Handle home page specially - no specific navType needed
-      if (location.pathname === '/') {
-        console.log('On home page, not setting specific navType');
-        setNavType(null);
-      }
-      // Explicitly set navigation type based on current page
-      else if (location.pathname === '/attendee-dashboard' || 
-               location.pathname.includes('/attendee') ||
-               location.pathname.includes('/event-photos') ||
-               location.pathname.includes('/my-photos')) {
-        console.log('Setting navType to attendee based on current page:', location.pathname);
-        setNavType('attendee');
-      } else if (location.pathname === '/events' || 
-                location.pathname.includes('/event') || 
-                location.pathname === '/upload' || 
-                location.pathname.includes('/upload') ||
-                location.pathname.includes('/view-event')) {
-        console.log('Setting navType to organizer based on current page:', location.pathname);
-        setNavType('organizer');
-      } else if (userRole === 'organizer') {
-        setNavType('organizer');
-      } else if (userRole === 'attendee') {
-        setNavType('attendee');
-      }
+      const checkUserEvents = async () => {
+        // Handle home page specially - no specific navType needed
+        if (location.pathname === '/') {
+          console.log('On home page, not setting specific navType');
+          setNavType(null);
+          return;
+        }
+        
+        // Check if we're on profile or settings page
+        if (location.pathname === '/profile' || location.pathname === '/settings') {
+          try {
+            const { getUserEvents } = await import('../config/eventStorage');
+            const userEvents = await getUserEvents(userEmail || '');
+            
+            if (userEvents && userEvents.length > 0) {
+              console.log('User has events, showing organizer navigation');
+              setNavType('organizer');
+            } else {
+              console.log('User has no events, showing attendee navigation');
+              setNavType('attendee');
+            }
+            return;
+          } catch (error) {
+            console.error('Error checking user events:', error);
+            // Default to attendee view if there's an error
+            setNavType('attendee');
+            return;
+          }
+        }
+        
+        // Handle other pages as before
+        if (location.pathname === '/attendee-dashboard' || 
+            location.pathname.includes('/attendee') ||
+            location.pathname.includes('/event-photos') ||
+            location.pathname.includes('/my-photos')) {
+          console.log('Setting navType to attendee based on current page:', location.pathname);
+          setNavType('attendee');
+        } else if (location.pathname === '/events' || 
+                  location.pathname.includes('/event') || 
+                  location.pathname === '/upload' || 
+                  location.pathname.includes('/upload') ||
+                  location.pathname.includes('/view-event')) {
+          console.log('Setting navType to organizer based on current page:', location.pathname);
+          setNavType('organizer');
+        } else if (userRole === 'organizer') {
+          setNavType('organizer');
+        } else if (userRole === 'attendee') {
+          setNavType('attendee');
+        }
+      };
+      
+      checkUserEvents();
     }
-  }, [isLoggedIn, location.pathname, userRole]);
+  }, [isLoggedIn, location.pathname, userRole, userEmail]);
 
   // Keep the pendingAction useEffect
   useEffect(() => {
@@ -891,23 +951,22 @@ const Navbar: React.FC<NavbarProps> = ({
                   </Link>
                   
                   <Link to="/upload" className={`text-base whitespace-nowrap font-semibold leading-6 text-blue-600 hover:text-blue-800 transition-all duration-300 hover:scale-105 px-5 py-2 rounded-lg hover:bg-blue-50 flex items-center ${location.pathname === '/upload' ? 'bg-blue-50' : ''}`}>
-                    <Upload className="h-4 w-4 mr-2" />Uploaded Images
+                    <Upload className="h-4 w-4 mr-2" />Upload Images
                   </Link>
                 </>
               )}
               
               {navType === 'attendee' && (
                 <>
+                  <Link to="/my-organizations" className={`text-base whitespace-nowrap font-semibold leading-6 text-blue-600 hover:text-blue-800 transition-all duration-300 hover:scale-105 px-5 py-2 rounded-lg hover:bg-blue-50 flex items-center ${location.pathname === '/my-organizations' ? 'bg-blue-50' : ''}`}>
+                    <User className="h-4 w-4 mr-2" />My Organizations
+                  </Link>
                   <Link to="/attendee-dashboard" className={`text-base whitespace-nowrap font-semibold leading-6 text-blue-600 hover:text-blue-800 transition-all duration-300 hover:scale-105 px-5 py-2 rounded-lg hover:bg-blue-50 flex items-center ${location.pathname === '/attendee-dashboard' ? 'bg-blue-50' : ''}`}>
                     <Camera className="h-4 w-4 mr-2" />My Albums
                   </Link>
                   <Link to="/my-photos" className={`text-base whitespace-nowrap font-semibold leading-6 text-blue-600 hover:text-blue-800 transition-all duration-300 hover:scale-105 px-5 py-2 rounded-lg hover:bg-blue-50 flex items-center ${location.pathname === '/my-photos' ? 'bg-blue-50' : ''}`}>
                     <ImageIcon className="h-4 w-4 mr-2" />My Photos
                   </Link>
-                  <Link to="/my-organizations" className={`text-base whitespace-nowrap font-semibold leading-6 text-blue-600 hover:text-blue-800 transition-all duration-300 hover:scale-105 px-5 py-2 rounded-lg hover:bg-blue-50 flex items-center ${location.pathname === '/my-organizations' ? 'bg-blue-50' : ''}`}>
-                    <User className="h-4 w-4 mr-2" />My Organizations
-                  </Link>
-                  {/* Removed My Organizations link */}
                 </>
               )}
               
@@ -1023,13 +1082,20 @@ const Navbar: React.FC<NavbarProps> = ({
                           className="-mx-3 block rounded-lg px-3 py-2 text-base font-semibold leading-7 text-blue-600 hover:text-blue-800 hover:bg-blue-50 flex items-center"
                           onClick={() => setMobileMenuOpen(false)}
                         >
-                          <Upload className="h-5 w-5 mr-2" /> Uploaded Images
+                          <Upload className="h-5 w-5 mr-2" /> Upload Images
                         </Link>
                       </>
                     )}
                     
                     {navType === 'attendee' && (
                       <>
+                        <Link
+                          to="/my-organizations"
+                          className="-mx-3 block rounded-lg px-3 py-2 text-base font-semibold leading-7 text-blue-600 hover:text-blue-800 hover:bg-blue-50 flex items-center"
+                          onClick={() => setMobileMenuOpen(false)}
+                        >
+                          <User className="h-5 w-5 mr-2" /> My Organizations
+                        </Link>
                         <Link
                           to="/attendee-dashboard"
                           className="-mx-3 block rounded-lg px-3 py-2 text-base font-semibold leading-7 text-blue-600 hover:text-blue-800 hover:bg-blue-50 flex items-center"
@@ -1043,13 +1109,6 @@ const Navbar: React.FC<NavbarProps> = ({
                           onClick={() => setMobileMenuOpen(false)}
                         >
                           <ImageIcon className="h-5 w-5 mr-2" /> My Photos
-                        </Link>
-                        <Link
-                          to="/my-organizations"
-                          className="-mx-3 block rounded-lg px-3 py-2 text-base font-semibold leading-7 text-blue-600 hover:text-blue-800 hover:bg-blue-50 flex items-center"
-                          onClick={() => setMobileMenuOpen(false)}
-                        >
-                          <User className="h-5 w-5 mr-2" /> My Organizations
                         </Link>
                       </>
                     )}
