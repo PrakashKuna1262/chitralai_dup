@@ -17,7 +17,7 @@ import {
 import s3ClientPromise, { validateEnvVariables } from '../config/aws';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { UserContext } from '../App';
-import { storeUserCredentials, getUserByEmail, queryUserByEmail } from '../config/dynamodb';
+import { storeUserCredentials, getUserByEmail, queryUserByEmail, getEventAttendeeCount } from '../config/dynamodb';
 import { ObjectCannedACL } from '@aws-sdk/client-s3';
 import heic2any from 'heic2any';
 
@@ -115,12 +115,13 @@ const EventDashboard = (props: EventDashboardProps) => {
     const [events, setEvents] = useState<EventData[]>([]);
     const [showAllEvents, setShowAllEvents] = useState(true);
     const [copiedEventId, setCopiedEventId] = useState<string | null>(null);
+    const [eventAttendeeCounts, setEventAttendeeCounts] = useState<Record<string, number>>({});
     const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
 
     const [userProfile, setUserProfile] = useState<any>(null);
     const [copiedCode, setCopiedCode] = useState(false);
     // Change sortOption state to allow 'default'
-    const [sortOption, setSortOption] = useState<'default' | 'name' | 'date'>('default');
+    const [sortOption, setSortOption] = useState<'name' | 'name-desc' | 'date' | 'date-desc'>('date');
     const [showQRCode, setShowQRCode] = useState(false);
 
     // State for event editing
@@ -145,14 +146,32 @@ const EventDashboard = (props: EventDashboardProps) => {
     // Add search state
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Update sorting logic to handle 'default'
+    // Update sorting logic to handle all sort options
     const sortedEvents = React.useMemo(() => {
         if (sortOption === 'name') {
             return [...events].sort((a, b) => a.name.localeCompare(b.name));
+        } else if (sortOption === 'name-desc') {
+            return [...events].sort((a, b) => b.name.localeCompare(a.name));
         } else if (sortOption === 'date') {
-            return [...events].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        } else {
-            return [...events]; // No sorting
+            return [...events].sort((a, b) => {
+                try {
+                    const dateA = parseDate(a.date);
+                    const dateB = parseDate(b.date);
+                    return dateA.getTime() - dateB.getTime(); // Oldest first
+                } catch (error) {
+                    return 0; // Keep original order if parsing fails
+                }
+            });
+        } else { // date-desc (Latest first)
+            return [...events].sort((a, b) => {
+                try {
+                    const dateA = parseDate(a.date);
+                    const dateB = parseDate(b.date);
+                    return dateB.getTime() - dateA.getTime(); // Latest first
+                } catch (error) {
+                    return 0; // Keep original order if parsing fails
+                }
+            });
         }
     }, [events, sortOption]);
 
@@ -283,6 +302,44 @@ const EventDashboard = (props: EventDashboardProps) => {
         img.src = `${imageUrl}?cache=${Date.now()}`;
     };
 
+    // Function to load attendee counts for all events
+    const loadEventAttendeeCounts = async (eventList: EventData[]) => {
+        try {
+            const counts: Record<string, number> = {};
+            
+            // Load attendee counts for each event in parallel
+            const countPromises = eventList.map(async (event) => {
+                try {
+                    const count = await getEventAttendeeCount(event.id);
+                    counts[event.id] = count;
+                } catch (error) {
+                    console.error(`Error loading attendee count for event ${event.id}:`, error);
+                    counts[event.id] = 0;
+                }
+            });
+            
+            await Promise.all(countPromises);
+            setEventAttendeeCounts(counts);
+            console.log('Event attendee counts loaded:', counts);
+        } catch (error) {
+            console.error('Error loading event attendee counts:', error);
+        }
+    };
+
+    // Function to refresh attendee count for a specific event
+    const refreshEventAttendeeCount = async (eventId: string) => {
+        try {
+            const count = await getEventAttendeeCount(eventId);
+            setEventAttendeeCounts(prev => ({
+                ...prev,
+                [eventId]: count
+            }));
+            console.log(`Attendee count refreshed for event ${eventId}:`, count);
+        } catch (error) {
+            console.error(`Error refreshing attendee count for event ${eventId}:`, error);
+        }
+    };
+
     const loadEvents = async () => {
         try {
             const userEmail = localStorage.getItem('userEmail');
@@ -343,6 +400,9 @@ const EventDashboard = (props: EventDashboardProps) => {
                 if (eventsChanged) {
                     setEvents(allEvents);
                     console.log('Events updated:', allEvents.length);
+                    
+                    // Load attendee counts for all events
+                    loadEventAttendeeCounts(allEvents);
                     
                     // Detect orientation for all event cover images
                     allEvents.forEach(event => {
@@ -551,6 +611,35 @@ const EventDashboard = (props: EventDashboardProps) => {
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const year = String(date.getFullYear()).slice(-2);
         return `${day}/${month}/${year}`;
+    };
+
+    // Simple utility function to parse DD/MM/YY format dates
+    const parseDate = (dateString: string): Date => {
+        if (!dateString) return new Date(0);
+        
+        try {
+            // Check if it's in DD/MM/YY format
+            if (dateString.includes('/')) {
+                const parts = dateString.split('/');
+                if (parts.length === 3) {
+                    let [day, month, year] = parts;
+                    
+                    // Convert 2-digit year to 4-digit
+                    if (year.length === 2) {
+                        const twoDigitYear = parseInt(year);
+                        year = (twoDigitYear >= 30 ? '19' : '20') + year;
+                    }
+                    
+                    // Create date as YYYY-MM-DD
+                    return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+                }
+            }
+            
+            // Fallback to direct parsing
+            return new Date(dateString);
+        } catch (error) {
+            return new Date(0);
+        }
     };
 
     const handleCreateEvent = async (e: React.FormEvent) => {
@@ -1101,11 +1190,7 @@ const EventDashboard = (props: EventDashboardProps) => {
       return () => document.removeEventListener('mousedown', handleClick);
     }, [showMobileSortDropdown]);
 
-    // At the top of the EventDashboard component, after hooks, add:
-    const attendeeCount = React.useMemo(() => {
-      const val = localStorage.getItem('attendeeCount');
-      return val && !isNaN(Number(val)) ? Number(val) : 0;
-    }, [userProfile]);
+
 
     useEffect(() => {
       if (!userProfile?.organizationCode) {
@@ -1688,11 +1773,12 @@ const EventDashboard = (props: EventDashboardProps) => {
                                     <select
                                         className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white shadow-sm focus:ring-blue-500 focus:border-blue-500"
                                         value={sortOption}
-                                        onChange={(e) => setSortOption(e.target.value as 'default' | 'name' | 'date')}
+                                        onChange={(e) => setSortOption(e.target.value as 'name' | 'name-desc' | 'date' | 'date-desc')}
                                     >
-                                        <option value="default">Sort (Default)</option>
-                                        <option value="date">Sort by Date</option>
+                                        <option value="date">Latest First</option>
+                                        <option value="date-desc">Oldest First</option>
                                         <option value="name">Sort by Name (A-Z)</option>
+                                        <option value="name-desc">Sort by Name (Z-A)</option>
                                     </select>
                                 </div>
                             </div>
@@ -1728,22 +1814,28 @@ const EventDashboard = (props: EventDashboardProps) => {
                                         style={{ maxWidth: 'calc(100vw - 2rem)' }}
                                     >
                                         <button
-                                            className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'default' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
-                                            onClick={() => { setSortOption('default'); setShowMobileSortDropdown(false); }}
-                                        >
-                                            {sortOption === 'default' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Default
-                                        </button>
-                                        <button
                                             className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'date' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
                                             onClick={() => { setSortOption('date'); setShowMobileSortDropdown(false); }}
                                         >
-                                            {sortOption === 'date' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Sort by Date
+                                            {sortOption === 'date' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Latest First
+                                        </button>
+                                        <button
+                                            className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'date-desc' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
+                                            onClick={() => { setSortOption('date-desc'); setShowMobileSortDropdown(false); }}
+                                        >
+                                            {sortOption === 'date-desc' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Oldest First
                                         </button>
                                         <button
                                             className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'name' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
                                             onClick={() => { setSortOption('name'); setShowMobileSortDropdown(false); }}
                                         >
                                             {sortOption === 'name' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Sort by Name (A-Z)
+                                        </button>
+                                        <button
+                                            className={`w-full flex items-center text-left px-4 py-2 text-sm hover:bg-blue-50 ${sortOption === 'name-desc' ? 'font-semibold text-blue-700' : 'text-gray-700'}`}
+                                            onClick={() => { setSortOption('name-desc'); setShowMobileSortDropdown(false); }}
+                                        >
+                                            {sortOption === 'name-desc' && <Check className="w-4 h-4 mr-2 text-blue-600" />}Sort by Name (Z-A)
                                         </button>
                                     </div>
                                 )}
@@ -1853,6 +1945,7 @@ const EventDashboard = (props: EventDashboardProps) => {
                                         )}
                                         <div className="flex items-center mb-1.5 bg-blue-50 rounded-lg p-1">
                                             <span className="text-xs font-medium text-gray-600 mr-1">Code:</span>
+                                            
                                             <div className="flex items-center flex-1">
                                                 <span className="text-xs font-mono font-medium text-blue-700">{event.id}</span>
                                                 <button 
@@ -1869,6 +1962,10 @@ const EventDashboard = (props: EventDashboardProps) => {
                                                         {copiedEventId === event.id ? "Copied!" : "Copy code"}
                                                     </span>
                                                 </button>
+                                                <span className="ml-auto flex items-center text-xs font-medium text-gray-600">
+                                                    <Users className="w-3 h-3 mr-1" />
+                                                    {eventAttendeeCounts[event.id] || 0}
+                                                </span>
                                             </div>
                                         </div>
                                         <div className="flex items-center justify-between mb-1.5">

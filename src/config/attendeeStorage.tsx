@@ -27,12 +27,10 @@ export const storeAttendeeImageData = async (data: AttendeeImageData): Promise<b
     const existingData = await getAttendeeImagesByUserAndEvent(data.userId, data.eventId);
     
     if (existingData) {
-      console.log('Existing record found, updating:', existingData);
+      console.log('Existing record found, completely replacing with fresh search results:', existingData);
       
-      // Merge the existing matched images with new ones to avoid duplicates
-      const allMatchedImages = new Set([...existingData.matchedImages, ...data.matchedImages]);
-      
-      // Update the record
+      // COMPLETELY REPLACE with fresh search results (don't merge)
+      // This ensures newly uploaded images are included and old deleted images are removed
       const updateCommand = new UpdateCommand({
         TableName: ATTENDEE_IMGS_TABLE,
         Key: {
@@ -42,7 +40,7 @@ export const storeAttendeeImageData = async (data: AttendeeImageData): Promise<b
         UpdateExpression: 'SET selfieURL = :selfieURL, matchedImages = :matchedImages, lastUpdated = :lastUpdated, eventName = :eventName, coverImage = :coverImage',
         ExpressionAttributeValues: {
           ':selfieURL': data.selfieURL,
-          ':matchedImages': Array.from(allMatchedImages),
+          ':matchedImages': data.matchedImages, // Use fresh search results, don't merge
           ':lastUpdated': new Date().toISOString(),
           ':eventName': data.eventName || existingData.eventName,
           ':coverImage': data.coverImage || existingData.coverImage
@@ -50,6 +48,7 @@ export const storeAttendeeImageData = async (data: AttendeeImageData): Promise<b
       });
       
       await (await docClientPromise).send(updateCommand);
+      console.log('Successfully replaced attendee data with fresh search results');
       return true;
     }
     
