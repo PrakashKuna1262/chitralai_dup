@@ -184,20 +184,57 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
         throw new Error('Invalid selfie format.');
       }
 
-      // Use searchFacesByImage to find matches
-      const matches = await searchFacesByImage(event.id, selfiePath);
+      // Brief wait to ensure any recent uploads have been processed
+      setProcessingStatus('Finding your photos...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // Store the attendee data in DynamoDB regardless of matches
+      // Use searchFacesByImage to find matches
+      let matches: {imageKey: string; similarity: number}[] = [];
+      try {
+        matches = await searchFacesByImage(event.id, selfiePath);
+      } catch (searchError) {
+        console.error('Face search failed:', searchError);
+        throw searchError;
+      }
+      
+      // Check for existing data to merge with fresh search results
+      const { getAttendeeImagesByUserAndEvent } = await import('../config/attendeeStorage');
+      const existingData = await getAttendeeImagesByUserAndEvent(userEmail || '', event.id);
+      
+      // Smart merge: combine fresh results with existing data (if any)
+      let allMatchedImageKeys = matches.map(match => match.imageKey);
+      
+      if (existingData && existingData.matchedImages) {
+        console.log('Merging fresh results with existing data...');
+        console.log('Fresh matches found:', matches.length);
+        console.log('Existing matches:', existingData.matchedImages.length);
+        
+        // Create a Set of fresh image keys for quick lookup
+        const freshImageKeys = new Set(allMatchedImageKeys);
+        
+        // Add existing images that are not in fresh results
+        const existingOnlyKeys = existingData.matchedImages.filter((key: string) => !freshImageKeys.has(key));
+        
+        // Combine fresh (priority) + existing only
+        allMatchedImageKeys = [...allMatchedImageKeys, ...existingOnlyKeys];
+        
+        console.log('Combined total matches:', allMatchedImageKeys.length);
+        console.log('New images found:', matches.length);
+        console.log('Existing images preserved:', existingOnlyKeys.length);
+      }
+      
+      // Store the merged attendee data in DynamoDB
       await storeAttendeeImageData({
         userId: userEmail || '',
         eventId: event.id,
         eventName: event.name,
         coverImage: event.coverImage || '',
         selfieURL: selfieUrl,
-        matchedImages: matches.map(match => match.imageKey),
+        matchedImages: allMatchedImageKeys, // Merged results (fresh + existing)
         uploadedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString()
       });
+      console.log('Stored merged search results for user:', userEmail, 'event:', event.id, 'total matches:', allMatchedImageKeys.length);
 
       if (matches.length === 0) {
         // Show popup instead of throwing error
@@ -225,18 +262,6 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
 
     try {
       setProcessingEventId(event.id);
-      setProcessingStatus('Checking for your photos...');
-      
-      // First, check if we already have matched images for this user and event
-      const existingMatches = await getMatchedImages(userEmail, event.id);
-      
-      if (existingMatches && existingMatches.matchedImages && existingMatches.matchedImages.length > 0) {
-        localStorage.setItem('path', `/organization-events/${organizationCode}`);
-        navigate(`/event-photos/${event.id}`);
-        return;
-      }
-
-      // If no existing matches, proceed with face comparison
       setProcessingStatus('Finding your photos...');
       const selfieUrl = await getAttendeeSelfieURL(userEmail);
       
@@ -264,14 +289,31 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       // Use searchFacesByImage to find matches
       const matches = await searchFacesByImage(event.id, selfiePath);
       
-      // Store the attendee data in DynamoDB regardless of matches
+      // Get existing matches to merge with new ones
+      const existingMatches = await getMatchedImages(userEmail, event.id);
+      let allMatchedImageKeys = matches.map(match => match.imageKey);
+
+      // If there are existing matches, merge them with new matches
+      if (existingMatches && existingMatches.matchedImages) {
+        // Create a Set of new image keys for quick lookup
+        const newImageKeys = new Set(allMatchedImageKeys);
+        
+        // Add existing images that are not in new results
+        const existingOnlyKeys = existingMatches.matchedImages.filter((key: string) => !newImageKeys.has(key));
+        
+        // Combine new + existing
+        allMatchedImageKeys = [...allMatchedImageKeys, ...existingOnlyKeys];
+        console.log('Total matches after merge:', allMatchedImageKeys.length);
+      }
+
+      // Store the merged data in DynamoDB
       await storeAttendeeImageData({
         userId: userEmail || '',
         eventId: event.id,
         eventName: event.name,
         coverImage: event.coverImage || '',
         selfieURL: selfieUrl,
-        matchedImages: matches.map(match => match.imageKey),
+        matchedImages: allMatchedImageKeys,
         uploadedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString()
       });

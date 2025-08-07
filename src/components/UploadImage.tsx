@@ -2549,8 +2549,23 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
           } else {
             padding = Math.max(60, Math.floor(minDimension * 0.065));
           }
+          // Calculate logo dimensions while maintaining aspect ratio
+          const logoAspectRatio = logoImg.naturalWidth / logoImg.naturalHeight;
+          let logoWidth: number;
+          let logoHeight: number;
+          
+          if (logoAspectRatio > 1) {
+            // Wider than tall (landscape)
+            logoWidth = logoSize;
+            logoHeight = logoSize / logoAspectRatio;
+          } else {
+            // Taller than wide (portrait) or square
+            logoHeight = logoSize;
+            logoWidth = logoSize * logoAspectRatio;
+          }
+          
           const x = padding;
-          const y = img.height - logoSize - padding;
+          const y = img.height - logoHeight - padding;
           
           // Add a semi-transparent background for better visibility
           ctx.save();
@@ -2563,13 +2578,16 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
           
           // Draw the logo with slightly reduced opacity for better blending
           ctx.globalAlpha = 0.85;
-          ctx.drawImage(logoImg, x, y, logoSize, logoSize);
+          ctx.drawImage(logoImg, x, y, logoWidth, logoHeight);
           
           // Reset the context
           ctx.restore();
           
           console.log('[Watermark] Applied watermark:', {
             logoSize,
+            logoWidth,
+            logoHeight,
+            logoAspectRatio,
             position: { x, y },
             padding,
             imageSize: { width: img.width, height: img.height },

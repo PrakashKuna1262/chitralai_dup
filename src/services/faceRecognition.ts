@@ -298,7 +298,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
           }
         },
         MaxFaces: 50,
-        FaceMatchThreshold: 80 // Minimum similarity threshold
+        FaceMatchThreshold: 90 // Minimum similarity threshold
       });
 
       const response = await rekognitionClient.send(command);
@@ -381,7 +381,7 @@ export const searchFacesByImage = async (eventId: string, selfieImageKey: string
             }
           },
           MaxFaces: 50,
-          FaceMatchThreshold: 80
+          FaceMatchThreshold: 90
         });
 
         const retryResponse = await rekognitionClient.send(retryCommand);

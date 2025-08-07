@@ -125,6 +125,35 @@ const formatDate = (dateString: string) => {
   }
 };
 
+// Simple utility function to parse DD/MM/YY format dates for sorting
+const parseDateForSorting = (dateString: string): Date => {
+  if (!dateString) return new Date(0);
+  
+  try {
+    // Check if it's in DD/MM/YY format
+    if (dateString.includes('/')) {
+      const parts = dateString.split('/');
+      if (parts.length === 3) {
+        let [day, month, year] = parts;
+        
+        // Convert 2-digit year to 4-digit
+        if (year.length === 2) {
+          const twoDigitYear = parseInt(year);
+          year = (twoDigitYear >= 30 ? '19' : '20') + year;
+        }
+        
+        // Create date as YYYY-MM-DD
+        return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      }
+    }
+    
+    // Fallback to direct parsing
+    return new Date(dateString);
+  } catch (error) {
+    return new Date(0);
+  }
+};
+
 const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModal }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -151,7 +180,7 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [eventSortOption, setEventSortOption] = useState<'date' | 'name'>('date');
+  const [eventSortOption, setEventSortOption] = useState<'date' | 'date-desc' | 'name' | 'name-desc'>('date');
   
   // New state variables for camera functionality
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -287,7 +316,29 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
             }
           }
           
-          if (!event) {
+          // If event not found in events table, check if user has images for this event
+          if (!event && userEmail) {
+            const { getAttendeeImagesByUserAndEvent } = await import('../config/attendeeStorage');
+            const attendeeData = await getAttendeeImagesByUserAndEvent(userEmail, eventIdFromUrl);
+            
+            if (attendeeData) {
+              // Create a minimal event object from attendee data
+              event = {
+                id: attendeeData.eventId,
+                name: attendeeData.eventName || 'Untitled Event',
+                date: attendeeData.uploadedAt,
+                coverImage: attendeeData.coverImage,
+                photoCount: attendeeData.matchedImages?.length || 0,
+                videoCount: 0,
+                guestCount: 0,
+                userEmail: attendeeData.userId,
+                createdAt: attendeeData.uploadedAt,
+                updatedAt: attendeeData.lastUpdated
+              };
+            } else {
+              throw new Error(`Event with code "${eventIdFromUrl}" not found. Please check the code and try again.`);
+            }
+          } else if (!event) {
             throw new Error(`Event with code "${eventIdFromUrl}" not found. Please check the code and try again.`);
           }
           
@@ -567,7 +618,30 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         }
       }
       
-      if (!event) {
+      // If event not found in events table, check if user has images for this event
+      if (!event && userEmail) {
+        const { getAttendeeImagesByUserAndEvent } = await import('../config/attendeeStorage');
+        const attendeeData = await getAttendeeImagesByUserAndEvent(userEmail, eventCode);
+        
+        if (attendeeData) {
+          // Create a minimal event object from attendee data
+          event = {
+            id: attendeeData.eventId,
+            name: attendeeData.eventName || 'Untitled Event',
+            date: attendeeData.uploadedAt,
+            coverImage: attendeeData.coverImage,
+            photoCount: attendeeData.matchedImages?.length || 0,
+            videoCount: 0,
+            guestCount: 0,
+            userEmail: attendeeData.userId,
+            createdAt: attendeeData.uploadedAt,
+            updatedAt: attendeeData.lastUpdated
+          };
+          console.log('Found event data in attendee images:', event);
+        } else {
+          throw new Error(`Event with code "${eventCode}" not found. Please check the code and try again. The code should be the unique identifier provided by the event organizer.`);
+        }
+      } else if (!event) {
         throw new Error(`Event with code "${eventCode}" not found. Please check the code and try again. The code should be the unique identifier provided by the event organizer.`);
       }
       
@@ -590,41 +664,39 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         return;
       }
       
-      // Check if user already has images for this event
+      // ALWAYS perform a fresh search to include newly uploaded images
+      console.log('Performing fresh face recognition search for event:', event.id);
+      
+      // Check if user has existing data to merge with fresh results
       const { getAttendeeImagesByUserAndEvent } = await import('../config/attendeeStorage');
       const existingData = await getAttendeeImagesByUserAndEvent(userEmail, event.id);
       
-      if (existingData) {
-        console.log('User already has images for this event:', existingData);
-        await handleExistingEventData(existingData, event);
-        
-        // Clear event code
-        setEventCode('');
-        
-        // Update statistics
-        await updateStatistics();
-        
-        // Hide processing status after a delay
-        setTimeout(() => setProcessingStatus(null), 3000);
-      } else {
         // Check if user has an existing selfie
         if (selfieUrl) {
           // User has an existing selfie, use it for comparison automatically
-          setProcessingStatus('Using your existing selfie to find photos...');
+        setProcessingStatus('Using your existing selfie to find photos...');
+        console.log('Found existing data:', existingData ? 'Yes' : 'No');
+        console.log('Using existing selfie for fresh search...');
           
           // Start the face comparison process using the existing selfie
-          await performFaceComparisonWithExistingSelfie(userEmail, selfieUrl, event);
+        // This will perform fresh search and merge with existing data
+        await performFaceComparisonWithExistingSelfie(userEmail, selfieUrl, event, existingData);
           
           // Clear event code
           setEventCode('');
         } else {
-          // No existing data or selfie, show the event details and selfie upload form
+        // No selfie available, show the event details and selfie upload form
           setEventDetails({
             id: event.id,
             name: event.name,
             date: event.date
           });
           setProcessingStatus(null);
+        
+        // If there was existing data, still show it while waiting for new selfie
+        if (existingData) {
+          console.log('No selfie available, showing existing data while waiting for new selfie');
+          await handleExistingEventData(existingData, event);
         }
       }
     } catch (error: any) {
@@ -753,8 +825,8 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
     }
   };
 
-  // New function to perform face comparison with existing selfie
-  const performFaceComparisonWithExistingSelfie = async (userEmail: string, existingSelfieUrl: string, event: any) => {
+  // New function to perform face comparison with existing selfie and merge with existing data
+  const performFaceComparisonWithExistingSelfie = async (userEmail: string, existingSelfieUrl: string, event: any, existingData?: any) => {
     try {
       setIsUploading(true);
       setProcessingStatus('Comparing with event images...');
@@ -769,15 +841,25 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         throw new Error('Could not determine S3 path for the existing selfie');
       }
       
+      // Brief wait to ensure any recent uploads have been processed
+      setProcessingStatus('Finding your photos...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       // Search for matching faces in the event collection
-      const matches = await searchFacesByImage(event.id, selfiePath);
+      let matches: {imageKey: string; similarity: number}[] = [];
+      try {
+        matches = await searchFacesByImage(event.id, selfiePath);
+      } catch (searchError) {
+        console.error('Face search failed:', searchError);
+        throw searchError;
+      }
 
       if (matches.length === 0) {
         throw new Error('No matching faces found in the event images.');
       }
 
-      // Convert matches to MatchingImage format
-      const matchingImages: MatchingImage[] = matches
+      // Convert fresh search matches to MatchingImage format
+      const freshMatchingImages: MatchingImage[] = matches
         .filter(match => match.similarity >= 70) // Only include high confidence matches
         .map(match => {
           // Get the filename from the match
@@ -795,6 +877,41 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
           };
         });
       
+      // Smart merge: combine fresh results with existing data
+      let allMatchingImages: MatchingImage[] = [...freshMatchingImages];
+      
+      if (existingData && existingData.matchedImages) {
+        console.log('Merging fresh results with existing data...');
+        console.log('Fresh matches found:', freshMatchingImages.length);
+        console.log('Existing matches:', existingData.matchedImages.length);
+        
+        // Convert existing data to MatchingImage format
+        const existingMatchingImages: MatchingImage[] = existingData.matchedImages.map((url: string) => ({
+          imageId: url.split('/').pop() || '',
+          eventId: event.id,
+          eventName: event.name,
+          imageUrl: constructS3Url(url, bucketName),
+          matchedDate: existingData.uploadedAt || new Date().toISOString(),
+          similarity: 80 // Default similarity for existing matches
+        }));
+        
+        // Create a Set of fresh image URLs for quick lookup
+        const freshImageUrls = new Set(freshMatchingImages.map(img => img.imageUrl));
+        
+        // Add existing images that are not in fresh results (in case some images were deleted from event)
+        const existingOnlyImages = existingMatchingImages.filter(img => !freshImageUrls.has(img.imageUrl));
+        
+        // Combine fresh (priority) + existing only
+        allMatchingImages = [...freshMatchingImages, ...existingOnlyImages];
+        
+        console.log('Combined total matches:', allMatchingImages.length);
+        console.log('New images found:', freshMatchingImages.length);
+        console.log('Existing images preserved:', existingOnlyImages.length);
+      }
+      
+      // Deduplicate final results
+      const matchingImages = deduplicateImages(allMatchingImages);
+      
       // Add this event to attended events if not already there
       const eventExists = attendedEvents.some(e => e.eventId === event.id);
       
@@ -810,7 +927,7 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         setAttendedEvents(prev => [newEvent, ...prev]);
       }
       
-      // Store the attendee image data in the database
+      // Store the attendee image data in the database - always replace with fresh results
       const matchedImageUrls = matchingImages.map(match => match.imageUrl);
       const currentTimestamp = new Date().toISOString();
       
@@ -820,12 +937,12 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         eventName: event.name,
         coverImage: event.coverImage,
         selfieURL: existingSelfieUrl,
-        matchedImages: matchedImageUrls,
+        matchedImages: matchedImageUrls, // This now contains ALL matching images (old + new)
         uploadedAt: currentTimestamp,
         lastUpdated: currentTimestamp
       };
       
-      // Store in the database
+      // Store in the database - this will completely replace old data with fresh search results
       const storageResult = await storeAttendeeImageData(attendeeData);
       
       if (!storageResult) {
@@ -835,14 +952,33 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
       // Update statistics
       await updateStatistics();
       
-      // Merge with existing images and deduplicate
-      const allImages = [...matchingImages, ...filteredImages];
-      const deduplicatedImages = deduplicateImages(allImages);
+      // COMPLETELY REPLACE existing images with fresh search results (don't merge)
+      // This ensures newly uploaded images appear and old ones are properly refreshed
+      console.log('Updating UI with fresh search results:', matchingImages);
       
-      // Set success message and filter to show only this event's images
-      setSuccessMessage(`Found ${matchingImages.length} new photos from ${event.name}!`);
+      // Set success message based on fresh vs existing results
+      const newImageCount = freshMatchingImages.length;
+      const totalImageCount = matchingImages.length;
+      
+      let successMsg = '';
+      if (existingData && existingData.matchedImages) {
+        const existingCount = existingData.matchedImages.length;
+        const newFound = Math.max(0, newImageCount - 0); // All fresh results are considered new
+        if (newFound > 0) {
+          successMsg = `Found ${newFound} new photos! Total: ${totalImageCount} photos from ${event.name}`;
+        } else {
+          successMsg = `Refreshed search complete! Total: ${totalImageCount} photos from ${event.name}`;
+        }
+      } else {
+        successMsg = `Found ${totalImageCount} photos from ${event.name}!`;
+      }
+      
+      setSuccessMessage(successMsg);
       setSelectedEventFilter(event.id);
-      setMatchingImages(deduplicatedImages);
+      
+      // Replace all matching images with merged results (fresh + existing)
+      setMatchingImages(matchingImages);
+      setFilteredImages(matchingImages);
       
       // Clear event code and details since we're done processing
       setEventCode('');
@@ -1543,11 +1679,13 @@ console.log(`User ${userEmail} downloading image`);
             <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Your Event Albums</h2>
             <select
               value={eventSortOption}
-              onChange={(e) => setEventSortOption(e.target.value as 'date' | 'name')}
+              onChange={(e) => setEventSortOption(e.target.value as 'date' | 'date-desc' | 'name' | 'name-desc')}
               className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="date">Latest First</option>
-              <option value="name">Name A-Z</option>
+              <option value="date-desc">Oldest First</option>
+              <option value="name">Sort A-Z</option>
+              <option value="name-desc">Sort Z-A</option>
             </select>
           </div>
 
@@ -1562,17 +1700,25 @@ console.log(`User ${userEmail} downloading image`);
               {attendedEvents
                 .filter(event => event.eventId !== 'default')
                 .sort((a, b) => {
-                  if (eventSortOption === 'date') {
-                    // Parse dates using the same format for consistent sorting
-                    const dateA = new Date(a.eventDate.includes('/') ? 
-                      a.eventDate.split('/').reverse().join('-') : 
-                      a.eventDate);
-                    const dateB = new Date(b.eventDate.includes('/') ? 
-                      b.eventDate.split('/').reverse().join('-') : 
-                      b.eventDate);
-                    return dateB.getTime() - dateA.getTime();
-                  } else {
-                    return a.eventName.localeCompare(b.eventName);
+                  try {
+                    if (eventSortOption === 'date') {
+                      // Parse dates properly for consistent sorting (newest first)
+                      const dateA = parseDateForSorting(a.eventDate);
+                      const dateB = parseDateForSorting(b.eventDate);
+                      return dateB.getTime() - dateA.getTime();
+                    } else if (eventSortOption === 'date-desc') {
+                      // Parse dates properly for consistent sorting (oldest first)
+                      const dateA = parseDateForSorting(a.eventDate);
+                      const dateB = parseDateForSorting(b.eventDate);
+                      return dateA.getTime() - dateB.getTime();
+                    } else if (eventSortOption === 'name') {
+                      return a.eventName.localeCompare(b.eventName);
+                    } else if (eventSortOption === 'name-desc') {
+                      return b.eventName.localeCompare(a.eventName);
+                    }
+                    return 0;
+                  } catch (error) {
+                    return 0; // Keep original order if parsing fails
                   }
                 })
                 .map((event) => (

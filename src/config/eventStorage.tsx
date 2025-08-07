@@ -8,8 +8,7 @@ import {
   UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { docClientPromise } from './dynamodb';
-import { s3ClientPromise, validateEnvVariables } from './aws';
-import { DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { validateEnvVariables } from './aws';
 
 // Table name for storing events
 export const EVENTS_TABLE = 'Events';
@@ -334,9 +333,12 @@ export const updateEventData = async (
 };
 
 // Delete an event
+// IMPORTANT: This function only deletes the event record from DynamoDB
+// S3 files are intentionally preserved to prevent accidental data loss
+// and allow for potential data recovery
 export const deleteEvent = async (eventId: string, userEmail: string): Promise<boolean> => {
   try {
-    // First delete from DynamoDB
+    // Delete only from DynamoDB, keep S3 files intact
     const command = new DeleteCommand({
       TableName: EVENTS_TABLE,
       Key: {
@@ -346,30 +348,9 @@ export const deleteEvent = async (eventId: string, userEmail: string): Promise<b
 
     await (await docClientPromise).send(command);
 
-    // Then delete all associated files from S3
-    const { bucketName } = await validateEnvVariables();
-    const s3Client = await s3ClientPromise;
-    
-    // List all objects in the event's directory
-    const listCommand = new ListObjectsV2Command({
-      Bucket: bucketName,
-      Prefix: `events/shared/${eventId}/`
-    });
-
-    const listedObjects = await s3Client.send(listCommand);
-    
-    if (listedObjects.Contents && listedObjects.Contents.length > 0) {
-      // Delete all objects in parallel
-      const deletePromises = listedObjects.Contents.map(({ Key }) => {
-        if (!Key) return Promise.resolve();
-        return s3Client.send(new DeleteObjectCommand({
-          Bucket: bucketName,
-          Key
-        }));
-      });
-
-      await Promise.all(deletePromises);
-    }
+    // Note: S3 files are intentionally preserved when deleting events
+    // This allows for data recovery and prevents accidental loss of uploaded content
+    console.log(`Event ${eventId} deleted from DynamoDB. S3 files preserved.`);
 
     return true;
   } catch (error) {

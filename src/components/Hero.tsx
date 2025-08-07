@@ -262,11 +262,29 @@ const Hero: React.FC<HeroProps> = ({ onShowSignIn }) => {
                   Face Recognition Photo Sharing
               </p>
             </div>
-              <h1 className="mt-1 sm:mt-2 md:mt-3 text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight text-gray-900 leading-tight">
-                Powerful <span className="text-blue-600">
-                  photo sharing
-                </span> platform for events
-            </h1>
+                             <h1 className="mt-1 sm:mt-2 md:mt-3 text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight text-gray-900 leading-tight">
+                  <div>Powerful <span className="text-blue-600">photo sharing</span></div>
+                  <div className="whitespace-nowrap">platform for <span className="inline-block h-[1.5em] overflow-hidden relative align-baseline min-w-[200px]">
+                   <motion.div
+                     className="flex flex-col"
+                     animate={{
+                       y: ["0%", "-20%", "-40%", "-60%", "-80%"]
+                     }}
+                     transition={{
+                       duration: 7.5,
+                       repeat: Infinity,
+                       ease: "easeInOut",
+                       times: [0, 0.20, 0.40, 0.60, 0.80]
+                     }}
+                   >
+                     <div className="h-[1.5em] mb-2 flex items-center text-blue-600">events</div>
+                     <div className="h-[1.5em] mb-2 flex items-center text-blue-600">marriages</div>
+                     <div className="h-[1.5em] mb-2 flex items-center text-blue-600">birthdays</div>
+                     <div className="h-[1.5em] mb-2 flex items-center text-blue-600">meetings</div>
+                     <div className="h-[1.5em] mb-2 flex items-center text-blue-600">organizations</div>
+                   </motion.div>
+                 </span></div>
+             </h1>
               <p className="mt-2 sm:mt-3 md:mt-4 text-sm sm:text-base md:text-lg leading-relaxed text-gray-600 max-w-lg">
                 We offer an intelligent solution for all your event photography needs with advanced face recognition technology.
             </p>

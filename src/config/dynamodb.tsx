@@ -554,3 +554,29 @@ export const deleteAttendeeOrg = async (userId: string, organizationCode: string
         throw error;
     }
 };
+
+// Function to get attendee count for a specific event
+export const getEventAttendeeCount = async (eventId: string): Promise<number> => {
+    const ddbDocClient = await docClientPromise;
+    try {
+        const command = new ScanCommand({
+            TableName: 'Attendee-imgs',
+            FilterExpression: 'eventId = :eventId',
+            ExpressionAttributeValues: {
+                ':eventId': eventId
+            }
+        });
+
+        const response = await ddbDocClient.send(command);
+        
+        if (response.Items && response.Items.length > 0) {
+            // Get unique userIds for this event
+            const uniqueUserIds = new Set(response.Items.map((item: any) => item.userId));
+            return uniqueUserIds.size;
+        }
+        return 0;
+    } catch (error) {
+        console.error('Error getting event attendee count:', error);
+        return 0;
+    }
+};
