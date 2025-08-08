@@ -3,11 +3,14 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { GoogleAuthConfig } from './config/GoogleAuthConfig';
+import { HelmetProvider } from 'react-helmet-async';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <GoogleAuthConfig>
-      <App />
-    </GoogleAuthConfig>
+    <HelmetProvider>
+      <GoogleAuthConfig>
+        <App />
+      </GoogleAuthConfig>
+    </HelmetProvider>
   </StrictMode>
 );

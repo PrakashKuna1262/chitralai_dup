@@ -1,10 +1,15 @@
-
+import SEO from '../components/SEO';
 import { Link } from 'react-router-dom';
 
 const PrivacyPolicy = () => {
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-sm">
+        <SEO
+          title="Privacy Policy"
+          description="Understand how Chitralai collects, uses, and protects your data in compliance with Indian data protection laws."
+          canonicalPath="/privacy"
+        />
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Privacy Policy</h1>
           <p className="text-gray-600">Last updated: June 19, 2025</p>
