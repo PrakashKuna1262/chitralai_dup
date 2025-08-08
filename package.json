@@ -53,6 +53,7 @@
     "sharp": "^0.34.3",
     "shortid": "^2.2.17",
     "stream-browserify": "^3.0.0",
+    "terser": "^5.43.1",
     "three": "^0.174.0",
     "util": "^0.12.5",
     "uuid": "^11.1.0"
