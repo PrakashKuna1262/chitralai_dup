@@ -1265,7 +1265,8 @@ const UploadImage = () => {
         let currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
         
         // Force branding to be enabled for event 568799
-        if (selectedEvent === "568799") {
+        console.log('[Upload] Checking selectedEvent:', selectedEvent, 'Type:', typeof selectedEvent);
+        if (String(selectedEvent) === "568799") {
           currentBranding = true;
           console.log('[Upload] Forcing branding ON for event 568799');
         }
@@ -1274,7 +1275,7 @@ const UploadImage = () => {
         let latestLogoUrl = null;
         
         // Check if the current event is "568799" and use specific logo from public folder
-        if (selectedEvent === "568799") {
+        if (String(selectedEvent) === "568799") {
           latestLogoUrl = "/taf and child logo.png";
           console.log('[Upload] Using specific logo for event 568799:', latestLogoUrl);
         } else {
@@ -1331,6 +1332,11 @@ const UploadImage = () => {
             }
             const shouldBrand = !!currentBranding;
             const logoForBranding = shouldBrand ? latestLogoUrl : null;
+            console.log('[Upload] Calling compressImage with:', {
+              branding: shouldBrand,
+              logoUrl: logoForBranding,
+              selectedEvent: selectedEvent
+            });
             const compressedBlob = await compressImage(fileToCompress, 0.8, shouldBrand, logoForBranding);
             totalCompressedBytes += compressedBlob.size;
             const compressedFile = new File([compressedBlob], fileToCompress.name, { type: 'image/jpeg' });
@@ -1793,14 +1799,15 @@ const UploadImage = () => {
         let currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
         
         // Force branding to be enabled for event 568799
-        if (selectedEvent === "568799") {
+        console.log('[Drive Upload] Checking selectedEvent:', selectedEvent, 'Type:', typeof selectedEvent);
+        if (String(selectedEvent) === "568799") {
           currentBranding = true;
           console.log('[Drive Upload] Forcing branding ON for event 568799');
         }
         
         // Determine logo URL based on event
         let currentLogoUrl = logoUrl;
-        if (selectedEvent === "568799") {
+        if (String(selectedEvent) === "568799") {
           currentLogoUrl = "/taf and child logo.png";
           console.log('[Drive Upload] Using specific logo for event 568799:', currentLogoUrl);
         }
@@ -1817,6 +1824,11 @@ const UploadImage = () => {
             const file = new File([blob], fileObj.name, { type: blob.type });
             const jpgFile = await convertToJpg(file);
             // Watermark
+            console.log('[Drive Upload] Calling compressImage with:', {
+              branding: currentBranding,
+              logoUrl: currentLogoUrl,
+              selectedEvent: selectedEvent
+            });
             const watermarkedBlob = await compressImage(jpgFile, 0.8, currentBranding, currentLogoUrl);
             totalCompressedBytes += watermarkedBlob.size;
             const watermarkedFile = new File([watermarkedBlob], fileObj.name, { type: 'image/jpeg' });
@@ -1948,7 +1960,8 @@ const UploadImage = () => {
       let logoUrlValue = null;
       
       // Force branding to be enabled for event 568799
-      if (selectedEvent === "568799") {
+      console.log('[Branding] Checking selectedEvent:', selectedEvent, 'Type:', typeof selectedEvent);
+      if (String(selectedEvent) === "568799") {
         brandingValue = true;
         console.log('[Branding] Forcing branding ON for event 568799');
       } else {
@@ -1963,7 +1976,7 @@ const UploadImage = () => {
         }
       }
       // If no branding in localStorage, fetch from database (only for non-568799 events)
-      if (selectedEvent !== "568799" && (brandingValue === null || brandingValue === undefined)) {
+      if (String(selectedEvent) !== "568799" && (brandingValue === null || brandingValue === undefined)) {
         const user = await queryUserByEmail(userEmail);
         brandingValue = !!user?.branding;
         localStorage.setItem('branding', JSON.stringify(brandingValue));
@@ -1981,7 +1994,7 @@ const UploadImage = () => {
       // --- LOGO FETCHING LOGIC ---
       if (brandingValue) {
         // Check if the current event is "568799" and use specific logo from public folder
-        if (selectedEvent === "568799") {
+        if (String(selectedEvent) === "568799") {
           logoUrlValue = "/taf and child logo.png";
           console.log('[Branding] Using specific logo for event 568799:', logoUrlValue);
         } else {
@@ -2622,15 +2635,32 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
       if (branding && logoUrl) {
         console.log('[Watermark] Branding is ON. logoUrl:', logoUrl);
         
-        // Test if logo URL is accessible first
-        try {
-          const response = await fetch(logoUrl, { method: 'HEAD' });
-          if (!response.ok) {
-            console.error('[Watermark] Logo URL is not accessible:', logoUrl, 'Status:', response.status);
+        // Skip accessibility test for event 568799 logo (public folder asset)
+        const isEvent568799Logo = logoUrl === "/taf and child logo.png";
+        
+        if (!isEvent568799Logo) {
+          // Test if logo URL is accessible first (only for non-568799 logos)
+          try {
+            const response = await fetch(logoUrl, { method: 'HEAD' });
+            if (!response.ok) {
+              console.error('[Watermark] Logo URL is not accessible:', logoUrl, 'Status:', response.status);
+              // Continue without watermark
+              canvas.toBlob((blob) => {
+                if (blob) {
+                  console.log('[compressImage] Created blob without watermark due to inaccessible logo, size:', blob.size);
+                  resolve(blob);
+                } else {
+                  reject('Compression failed');
+                }
+              }, 'image/jpeg', quality);
+              return;
+            }
+          } catch (error) {
+            console.error('[Watermark] Error testing logo URL accessibility:', error);
             // Continue without watermark
             canvas.toBlob((blob) => {
               if (blob) {
-                console.log('[compressImage] Created blob without watermark due to inaccessible logo, size:', blob.size);
+                console.log('[compressImage] Created blob without watermark due to logo test error, size:', blob.size);
                 resolve(blob);
               } else {
                 reject('Compression failed');
@@ -2638,18 +2668,8 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
             }, 'image/jpeg', quality);
             return;
           }
-        } catch (error) {
-          console.error('[Watermark] Error testing logo URL accessibility:', error);
-          // Continue without watermark
-          canvas.toBlob((blob) => {
-            if (blob) {
-              console.log('[compressImage] Created blob without watermark due to logo test error, size:', blob.size);
-              resolve(blob);
-            } else {
-              reject('Compression failed');
-            }
-          }, 'image/jpeg', quality);
-          return;
+        } else {
+          console.log('[Watermark] Skipping accessibility test for event 568799 public logo');
         }
         
         const logoImg = new window.Image();
@@ -2761,11 +2781,16 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
             }
           }, 'image/jpeg', quality);
         };
-        // Prefer localStorage logo if available
-        const localLogoDataUrl = localStorage.getItem('orgLogoDataUrl');
-        if (localLogoDataUrl) {
-          logoImg.src = localLogoDataUrl;
+        // For event 568799, always use the public logo, skip localStorage cache
+        if (isEvent568799Logo) {
+          logoImg.src = logoUrl;
+          console.log('[Watermark] Using direct public logo for event 568799:', logoUrl);
         } else {
+          // Prefer localStorage logo if available (for other events)
+          const localLogoDataUrl = localStorage.getItem('orgLogoDataUrl');
+          if (localLogoDataUrl) {
+            logoImg.src = localLogoDataUrl;
+          } else {
           // Always fetch the logo as a blob to avoid cache and CORS issues
           try {
             const logoResp = await fetch(logoUrl, { cache: 'reload' });
@@ -2776,6 +2801,7 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
           } catch (err) {
             console.error('[Watermark] Failed to fetch logo as blob:', err);
             logoImg.src = logoUrl; // fallback
+          }
           }
         }
       } else {
