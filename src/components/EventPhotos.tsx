@@ -479,13 +479,13 @@ const EventPhotos: React.FC = () => {
           </div>
         ) : (
           <>
-            <div className="flex flex-col mb-8">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8">
               <div className="w-full min-w-0">
                 <h1 className="text-base md:text-3xl font-bold text-gray-900 mb-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
                   {event?.eventName || 'Event Photos'}
                 </h1>
                 {event && (
-                  <p className="text-xs md:text-base text-gray-600 text-left whitespace-nowrap overflow-hidden text-ellipsis mb-3">
+                  <p className="text-xs md:text-base text-gray-600 text-left whitespace-nowrap overflow-hidden text-ellipsis">
                     {new Date(event.eventDate).toLocaleDateString(undefined, {
                       weekday: 'short',
                       year: 'numeric',
@@ -495,7 +495,7 @@ const EventPhotos: React.FC = () => {
                   </p>
                 )}
               </div>
-              <div className="flex flex-row gap-2 mt-2">
+              <div className="flex flex-row gap-2 mt-3 sm:mt-0">
                 <button
                   onClick={() => {
                     console.log('Navigating to upload with state:', {
@@ -511,17 +511,17 @@ const EventPhotos: React.FC = () => {
                       }
                     });
                   }}
-                  className="flex-1 flex items-center justify-center px-3 py-2 md:px-4 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm md:text-base"
+                  className="flex items-center justify-center px-8 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm whitespace-nowrap"
                 >
-                  <Upload className="h-4 w-4 mr-2" />
+                  <Upload className="h-3.5 w-3.5 mr-1.5" />
                   Add Photos
                 </button>
                 <button
                   onClick={handleDownloadAll}
-                  className="flex-1 flex items-center justify-center px-3 py-2 md:px-4 md:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm md:text-base"
+                  className="flex items-center justify-center px-8 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm whitespace-nowrap"
                   disabled={images.length === 0}
                 >
-                  <Download className="h-4 w-4 mr-2" />
+                  <Download className="h-3.5 w-3.5 mr-1.5" />
                   Download All
                 </button>
               </div>
