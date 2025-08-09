@@ -1262,7 +1262,13 @@ const UploadImage = () => {
         const batch = batches[batchIndex];
         // Get latest branding status from localStorage for this upload
         const brandingFromStorage = localStorage.getItem('branding');
-        const currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
+        let currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
+        
+        // Force branding to be enabled for event 568799
+        if (selectedEvent === "568799") {
+          currentBranding = true;
+          console.log('[Upload] Forcing branding ON for event 568799');
+        }
 
         // --- Fetch the latest logo URL from userProfile/localStorage before each batch ---
         let latestLogoUrl = null;
@@ -1784,7 +1790,13 @@ const UploadImage = () => {
         const batch = result.slice(i, i + BATCH_SIZE);
         // Get branding and logo for this batch
         const brandingFromStorage = localStorage.getItem('branding');
-        const currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
+        let currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
+        
+        // Force branding to be enabled for event 568799
+        if (selectedEvent === "568799") {
+          currentBranding = true;
+          console.log('[Drive Upload] Forcing branding ON for event 568799');
+        }
         
         // Determine logo URL based on event
         let currentLogoUrl = logoUrl;
@@ -1934,17 +1946,24 @@ const UploadImage = () => {
       const userProfileStr = localStorage.getItem('userProfile');
       let brandingValue = false;
       let logoUrlValue = null;
-      // Try to get branding from localStorage first
-      const brandingFromStorage = localStorage.getItem('branding');
-      if (brandingFromStorage) {
-        try {
-          brandingValue = JSON.parse(brandingFromStorage);
-        } catch (e) {
-          console.error('Error parsing branding from localStorage:', e);
+      
+      // Force branding to be enabled for event 568799
+      if (selectedEvent === "568799") {
+        brandingValue = true;
+        console.log('[Branding] Forcing branding ON for event 568799');
+      } else {
+        // Try to get branding from localStorage first for other events
+        const brandingFromStorage = localStorage.getItem('branding');
+        if (brandingFromStorage) {
+          try {
+            brandingValue = JSON.parse(brandingFromStorage);
+          } catch (e) {
+            console.error('Error parsing branding from localStorage:', e);
+          }
         }
       }
-      // If no branding in localStorage, fetch from database
-      if (brandingValue === null || brandingValue === undefined) {
+      // If no branding in localStorage, fetch from database (only for non-568799 events)
+      if (selectedEvent !== "568799" && (brandingValue === null || brandingValue === undefined)) {
         const user = await queryUserByEmail(userEmail);
         brandingValue = !!user?.branding;
         localStorage.setItem('branding', JSON.stringify(brandingValue));
