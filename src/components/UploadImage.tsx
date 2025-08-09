@@ -1264,20 +1264,20 @@ const UploadImage = () => {
         const brandingFromStorage = localStorage.getItem('branding');
         let currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
         
-        // Force branding to be enabled for event 568799
+        // Force branding to be enabled for event 910245
         console.log('[Upload] Checking selectedEvent:', selectedEvent, 'Type:', typeof selectedEvent);
-        if (String(selectedEvent) === "568799") {
+        if (String(selectedEvent) === "910245") {
           currentBranding = true;
-          console.log('[Upload] Forcing branding ON for event 568799');
+          console.log('[Upload] Forcing branding ON for event 910245');
         }
 
         // --- Fetch the latest logo URL from userProfile/localStorage before each batch ---
         let latestLogoUrl = null;
         
-        // Check if the current event is "568799" and use specific logo from public folder
-        if (String(selectedEvent) === "568799") {
+        // Check if the current event is "910245" and use specific logo from public folder
+        if (String(selectedEvent) === "910245") {
           latestLogoUrl = "/taf and child logo.png";
-          console.log('[Upload] Using specific logo for event 568799:', latestLogoUrl);
+          console.log('[Upload] Using specific logo for event 910245:', latestLogoUrl);
         } else {
           // Original logic for other events
           const userProfileStr = localStorage.getItem('userProfile');
@@ -1798,18 +1798,18 @@ const UploadImage = () => {
         const brandingFromStorage = localStorage.getItem('branding');
         let currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
         
-        // Force branding to be enabled for event 568799
+        // Force branding to be enabled for event 910245
         console.log('[Drive Upload] Checking selectedEvent:', selectedEvent, 'Type:', typeof selectedEvent);
-        if (String(selectedEvent) === "568799") {
+        if (String(selectedEvent) === "910245") {
           currentBranding = true;
-          console.log('[Drive Upload] Forcing branding ON for event 568799');
+          console.log('[Drive Upload] Forcing branding ON for event 910245');
         }
         
         // Determine logo URL based on event
         let currentLogoUrl = logoUrl;
-        if (String(selectedEvent) === "568799") {
+        if (String(selectedEvent) === "910245") {
           currentLogoUrl = "/taf and child logo.png";
-          console.log('[Drive Upload] Using specific logo for event 568799:', currentLogoUrl);
+          console.log('[Drive Upload] Using specific logo for event 910245:', currentLogoUrl);
         }
         // Download, watermark, and upload in parallel
         const compressResults = await Promise.all(batch.map(async (fileObj) => {
@@ -1959,11 +1959,11 @@ const UploadImage = () => {
       let brandingValue = false;
       let logoUrlValue = null;
       
-      // Force branding to be enabled for event 568799
+      // Force branding to be enabled for event 910245
       console.log('[Branding] Checking selectedEvent:', selectedEvent, 'Type:', typeof selectedEvent);
-      if (String(selectedEvent) === "568799") {
+      if (String(selectedEvent) === "910245") {
         brandingValue = true;
-        console.log('[Branding] Forcing branding ON for event 568799');
+        console.log('[Branding] Forcing branding ON for event 910245');
       } else {
         // Try to get branding from localStorage first for other events
         const brandingFromStorage = localStorage.getItem('branding');
@@ -1975,8 +1975,8 @@ const UploadImage = () => {
           }
         }
       }
-      // If no branding in localStorage, fetch from database (only for non-568799 events)
-      if (String(selectedEvent) !== "568799" && (brandingValue === null || brandingValue === undefined)) {
+      // If no branding in localStorage, fetch from database (only for non-910245 events)
+      if (String(selectedEvent) !== "910245" && (brandingValue === null || brandingValue === undefined)) {
         const user = await queryUserByEmail(userEmail);
         brandingValue = !!user?.branding;
         localStorage.setItem('branding', JSON.stringify(brandingValue));
@@ -1993,10 +1993,10 @@ const UploadImage = () => {
       setBranding(brandingValue);
       // --- LOGO FETCHING LOGIC ---
       if (brandingValue) {
-        // Check if the current event is "568799" and use specific logo from public folder
-        if (String(selectedEvent) === "568799") {
+        // Check if the current event is "910245" and use specific logo from public folder
+        if (String(selectedEvent) === "910245") {
           logoUrlValue = "/taf and child logo.png";
-          console.log('[Branding] Using specific logo for event 568799:', logoUrlValue);
+          console.log('[Branding] Using specific logo for event 910245:', logoUrlValue);
         } else {
           // Original logic for other events
           let logoUrlFromProfile = null;
@@ -2635,11 +2635,11 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
       if (branding && logoUrl) {
         console.log('[Watermark] Branding is ON. logoUrl:', logoUrl);
         
-        // Skip accessibility test for event 568799 logo (public folder asset)
-        const isEvent568799Logo = logoUrl === "/taf and child logo.png";
+        // Skip accessibility test for event 910245 logo (public folder asset)
+        const isEvent910245Logo = logoUrl === "/taf and child logo.png";
         
-        if (!isEvent568799Logo) {
-          // Test if logo URL is accessible first (only for non-568799 logos)
+        if (!isEvent910245Logo) {
+          // Test if logo URL is accessible first (only for non-910245 logos)
           try {
             const response = await fetch(logoUrl, { method: 'HEAD' });
             if (!response.ok) {
@@ -2669,7 +2669,7 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
             return;
           }
         } else {
-          console.log('[Watermark] Skipping accessibility test for event 568799 public logo');
+          console.log('[Watermark] Skipping accessibility test for event 910245 public logo');
         }
         
         const logoImg = new window.Image();
@@ -2781,10 +2781,10 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
             }
           }, 'image/jpeg', quality);
         };
-        // For event 568799, always use the public logo, skip localStorage cache
-        if (isEvent568799Logo) {
+        // For event 910245, always use the public logo, skip localStorage cache
+        if (isEvent910245Logo) {
           logoImg.src = logoUrl;
-          console.log('[Watermark] Using direct public logo for event 568799:', logoUrl);
+          console.log('[Watermark] Using direct public logo for event 910245:', logoUrl);
         } else {
           // Prefer localStorage logo if available (for other events)
           const localLogoDataUrl = localStorage.getItem('orgLogoDataUrl');
