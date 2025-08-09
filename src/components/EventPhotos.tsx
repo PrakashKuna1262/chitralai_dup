@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Image as ImageIcon, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, Download, X, Share2, Facebook, Twitter, Link, Mail, Instagram, Linkedin, MessageCircle, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
 import { getAttendeeImagesByUserAndEvent } from '../config/attendeeStorage';
 import { validateEnvVariables } from '../config/aws';
 import ProgressiveImage from './ProgressiveImage';
@@ -293,12 +293,14 @@ const EventPhotos: React.FC = () => {
         }
         
         // Set event information from the Attendee-imgs table
-        setEvent({
+        const eventInfo = {
           eventId: attendeeData.eventId,
           eventName: attendeeData.eventName || `Event ${attendeeData.eventId}`,
           eventDate: attendeeData.uploadedAt,
           coverImage: attendeeData.coverImage ? constructS3Url(attendeeData.coverImage, bucketName) : undefined
-        });
+        };
+        console.log('Setting event info:', eventInfo);
+        setEvent(eventInfo);
         
         // Convert the matched images array to MatchingImage objects and construct full S3 URLs
         const eventImages = attendeeData.matchedImages.map(imagePath => ({
@@ -477,30 +479,52 @@ const EventPhotos: React.FC = () => {
           </div>
         ) : (
           <>
-            <div className="flex flex-row justify-between items-center mb-8 gap-2">
-              <div className="flex-1 flex flex-col md:block items-start">
-                <h1 className="text-base md:text-3xl font-bold text-gray-900 mb-1 text-left">
+            <div className="flex flex-col mb-8">
+              <div className="w-full min-w-0">
+                <h1 className="text-base md:text-3xl font-bold text-gray-900 mb-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
                   {event?.eventName || 'Event Photos'}
                 </h1>
                 {event && (
-                  <p className="text-xs md:text-base text-gray-600 text-left">
+                  <p className="text-xs md:text-base text-gray-600 text-left whitespace-nowrap overflow-hidden text-ellipsis mb-3">
                     {new Date(event.eventDate).toLocaleDateString(undefined, {
-                      weekday: 'long',
+                      weekday: 'short',
                       year: 'numeric',
-                      month: 'long',
+                      month: 'short',
                       day: 'numeric'
                     })}
                   </p>
                 )}
               </div>
-              <button
-                onClick={handleDownloadAll}
-                className="flex-shrink-0 flex items-center justify-center px-3 py-2 md:px-4 md:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm md:text-base"
-                disabled={images.length === 0}
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Download All
-              </button>
+              <div className="flex flex-row gap-2 mt-2">
+                <button
+                  onClick={() => {
+                    console.log('Navigating to upload with state:', {
+                      eventId: eventId,
+                      eventName: event?.eventName || 'Event',
+                      organizationCode: localStorage.getItem('currentOrganizationCode') || ''
+                    });
+                    navigate('/upload', {
+                      state: {
+                        eventId: eventId,
+                        eventName: event?.eventName || 'Event',
+                        organizationCode: localStorage.getItem('currentOrganizationCode') || ''
+                      }
+                    });
+                  }}
+                  className="flex-1 flex items-center justify-center px-3 py-2 md:px-4 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm md:text-base"
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Add Photos
+                </button>
+                <button
+                  onClick={handleDownloadAll}
+                  className="flex-1 flex items-center justify-center px-3 py-2 md:px-4 md:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm md:text-base"
+                  disabled={images.length === 0}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download All
+                </button>
+              </div>
             </div>
 
             {images.length > 0 ? (
