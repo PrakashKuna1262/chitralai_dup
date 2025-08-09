@@ -1266,23 +1266,31 @@ const UploadImage = () => {
 
         // --- Fetch the latest logo URL from userProfile/localStorage before each batch ---
         let latestLogoUrl = null;
-        const userProfileStr = localStorage.getItem('userProfile');
-        if (userProfileStr) {
-          try {
-            const userProfile = JSON.parse(userProfileStr);
-            if (userProfile.organizationLogo) {
-              latestLogoUrl = userProfile.organizationLogo;
+        
+        // Check if the current event is "568799" and use specific logo from public folder
+        if (selectedEvent === "568799") {
+          latestLogoUrl = "/taf and child logo.png";
+          console.log('[Upload] Using specific logo for event 568799:', latestLogoUrl);
+        } else {
+          // Original logic for other events
+          const userProfileStr = localStorage.getItem('userProfile');
+          if (userProfileStr) {
+            try {
+              const userProfile = JSON.parse(userProfileStr);
+              if (userProfile.organizationLogo) {
+                latestLogoUrl = userProfile.organizationLogo;
+              }
+            } catch (e) {
+              console.error('Error parsing userProfile:', e);
             }
-          } catch (e) {
-            console.error('Error parsing userProfile:', e);
           }
-        }
-        // Fallback to previous logoUrl state if not found
-        if (!latestLogoUrl) latestLogoUrl = logoUrl;
-        // --- Add cache-busting query param to force latest logo fetch ---
-        if (latestLogoUrl) {
-          const ts = Date.now();
-          latestLogoUrl = latestLogoUrl.split('?')[0] + '?t=' + ts;
+          // Fallback to previous logoUrl state if not found
+          if (!latestLogoUrl) latestLogoUrl = logoUrl;
+          // --- Add cache-busting query param to force latest logo fetch ---
+          if (latestLogoUrl) {
+            const ts = Date.now();
+            latestLogoUrl = latestLogoUrl.split('?')[0] + '?t=' + ts;
+          }
         }
         // --- End fetch latest logo URL ---
 
@@ -1294,6 +1302,7 @@ const UploadImage = () => {
         });
         
         // Also check userProfile for branding
+        const userProfileStr = localStorage.getItem('userProfile');
         if (userProfileStr) {
           try {
             const userProfile = JSON.parse(userProfileStr);
@@ -1776,6 +1785,13 @@ const UploadImage = () => {
         // Get branding and logo for this batch
         const brandingFromStorage = localStorage.getItem('branding');
         const currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
+        
+        // Determine logo URL based on event
+        let currentLogoUrl = logoUrl;
+        if (selectedEvent === "568799") {
+          currentLogoUrl = "/taf and child logo.png";
+          console.log('[Drive Upload] Using specific logo for event 568799:', currentLogoUrl);
+        }
         // Download, watermark, and upload in parallel
         const compressResults = await Promise.all(batch.map(async (fileObj) => {
           try {
@@ -1789,7 +1805,7 @@ const UploadImage = () => {
             const file = new File([blob], fileObj.name, { type: blob.type });
             const jpgFile = await convertToJpg(file);
             // Watermark
-            const watermarkedBlob = await compressImage(jpgFile, 0.8, currentBranding, logoUrl);
+            const watermarkedBlob = await compressImage(jpgFile, 0.8, currentBranding, currentLogoUrl);
             totalCompressedBytes += watermarkedBlob.size;
             const watermarkedFile = new File([watermarkedBlob], fileObj.name, { type: 'image/jpeg' });
             return { file: watermarkedFile, size: watermarkedBlob.size, name: fileObj.name };
@@ -1945,51 +1961,58 @@ const UploadImage = () => {
       setBranding(brandingValue);
       // --- LOGO FETCHING LOGIC ---
       if (brandingValue) {
-        let logoUrlFromProfile = null;
-        let logoFilename = null;
-        if (userProfileStr) {
-          try {
-            const userProfile = JSON.parse(userProfileStr);
-            if (userProfile.organizationLogo) {
-              // If it's a full URL, use it directly
-              if (userProfile.organizationLogo.startsWith('http')) {
-                logoUrlFromProfile = userProfile.organizationLogo;
-                console.log('[Branding] Using logo from userProfile (full URL):', logoUrlFromProfile);
-              } else {
-                // If it's just a filename, construct the S3 URL
-                logoFilename = userProfile.organizationLogo.split('/').pop();
-                if (logoFilename) {
-                  logoUrlFromProfile = `https://chitral-ai.s3.amazonaws.com/users/${userEmail}/logo/${logoFilename}`;
-                  console.log('[Branding] Constructed logo URL from filename in userProfile:', logoUrlFromProfile);
+        // Check if the current event is "568799" and use specific logo from public folder
+        if (selectedEvent === "568799") {
+          logoUrlValue = "/taf and child logo.png";
+          console.log('[Branding] Using specific logo for event 568799:', logoUrlValue);
+        } else {
+          // Original logic for other events
+          let logoUrlFromProfile = null;
+          let logoFilename = null;
+          if (userProfileStr) {
+            try {
+              const userProfile = JSON.parse(userProfileStr);
+              if (userProfile.organizationLogo) {
+                // If it's a full URL, use it directly
+                if (userProfile.organizationLogo.startsWith('http')) {
+                  logoUrlFromProfile = userProfile.organizationLogo;
+                  console.log('[Branding] Using logo from userProfile (full URL):', logoUrlFromProfile);
+                } else {
+                  // If it's just a filename, construct the S3 URL
+                  logoFilename = userProfile.organizationLogo.split('/').pop();
+                  if (logoFilename) {
+                    logoUrlFromProfile = `https://chitral-ai.s3.amazonaws.com/users/${userEmail}/logo/${logoFilename}`;
+                    console.log('[Branding] Constructed logo URL from filename in userProfile:', logoUrlFromProfile);
+                  }
                 }
               }
+            } catch (e) {
+              console.error('[Branding] Error parsing userProfile:', e);
             }
-          } catch (e) {
-            console.error('[Branding] Error parsing userProfile:', e);
           }
-        }
-        if (logoUrlFromProfile) {
-          logoUrlValue = logoUrlFromProfile;
-        } else {
-          // Fallback: list S3 directory and use the first file
-          try {
-            const { bucketName } = await validateEnvVariables();
-            const s3Client = await s3ClientPromise;
-            const listCommand = new ListObjectsV2Command({
-              Bucket: bucketName,
-              Prefix: `users/${userEmail}/logo/`
-            });
-            const listedObjects = await s3Client.send(listCommand);
-            const files = (listedObjects.Contents || []).filter(obj => obj.Key && !obj.Key.endsWith('/'));
-            if (files.length > 0) {
-              const logoKey = files[0].Key;
-              logoUrlValue = `https://${bucketName}.s3.amazonaws.com/${logoKey}`;
-              console.log('[Branding] Fallback: Using first file in S3 logo directory:', logoUrlValue);
-            } else {
-              console.warn('[Branding] No logo file found in S3 logo directory for user:', userEmail);
+          if (logoUrlFromProfile) {
+            logoUrlValue = logoUrlFromProfile;
+          } else {
+            // Fallback: list S3 directory and use the first file
+            try {
+              const { bucketName } = await validateEnvVariables();
+              const s3Client = await s3ClientPromise;
+              const listCommand = new ListObjectsV2Command({
+                Bucket: bucketName,
+                Prefix: `users/${userEmail}/logo/`
+              });
+              const listedObjects = await s3Client.send(listCommand);
+              const files = (listedObjects.Contents || []).filter(obj => obj.Key && !obj.Key.endsWith('/'));
+              if (files.length > 0) {
+                const logoKey = files[0].Key;
+                logoUrlValue = `https://${bucketName}.s3.amazonaws.com/${logoKey}`;
+                console.log('[Branding] Fallback: Using first file in S3 logo directory:', logoUrlValue);
+              } else {
+                console.warn('[Branding] No logo file found in S3 logo directory for user:', userEmail);
+              }
+            } catch (error) {
+              console.error('[Branding] Error searching S3 for logo:', error);
             }
-          } catch (error) {
-            console.error('[Branding] Error searching S3 for logo:', error);
           }
         }
       } else {
@@ -2003,7 +2026,7 @@ const UploadImage = () => {
       });
     };
     fetchBranding();
-  }, []);
+  }, [selectedEvent]);
 
   // Listen for branding changes in localStorage
   useEffect(() => {
