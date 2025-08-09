@@ -4,6 +4,7 @@ import { Calendar, ImageIcon, ArrowLeft, Camera, X, AlertCircle } from 'lucide-r
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { s3ClientPromise, validateEnvVariables } from '../config/aws';
 import { getEventsViaUserByOrgCode, storeAttendeeImageData, getAttendeeSelfieURL, getMatchedImages } from '../config/dynamodb';
+import { getAttendeeImagesByUserAndEvent } from '../config/attendeeStorage';
 import { searchFacesByImage } from '../services/faceRecognition';
 import { UserContext } from '../App';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -45,6 +46,9 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
   // Popup message state
   const [showPopup, setShowPopup] = useState(false);
   const [popupMessage, setPopupMessage] = useState('');
+
+  // Add photos modal state
+  const [showAddPhotosModal, setShowAddPhotosModal] = useState(false);
 
   // Function to show popup message
   const showPopupMessage = (message: string) => {
@@ -319,8 +323,17 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       });
 
       if (matches.length === 0) {
-        // Show popup instead of throwing error
-        showPopupMessage('No matching photos found in this event. Please try a different event.');
+        // Check if user has uploaded photos to this event
+        const userEventData = await getAttendeeImagesByUserAndEvent(userEmail, event.id);
+        if (userEventData && userEventData.matchedImages && userEventData.matchedImages.length > 0) {
+          // User has photos, navigate to view them
+          localStorage.setItem('path', `/organization-events/${organizationCode}`);
+          navigate(`/event-photos/${event.id}`);
+        } else {
+          // No photos found, show option to add photos
+          setCurrentEvent(event);
+          setShowAddPhotosModal(true);
+        }
         return;
       }
 
@@ -335,6 +348,17 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
       setProcessingStatus(null);
       setProcessingEventId(null);
     }
+  };
+
+  const handleAddPhotos = (event: Event) => {
+    // Navigate to upload page with event details pre-filled
+    navigate('/upload', {
+      state: {
+        eventId: event.id,
+        eventName: event.name,
+        organizationCode: organizationCode
+      }
+    });
   };
 
   if (loading) {
@@ -482,6 +506,53 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
                     <p className="text-blue-600">{processingStatus}</p>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add Photos Modal */}
+        {showAddPhotosModal && currentEvent && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full relative">
+              <button
+                onClick={() => {
+                  setShowAddPhotosModal(false);
+                  setCurrentEvent(null);
+                }}
+                className="absolute -top-3 -right-3 bg-white text-gray-700 rounded-full p-2 shadow-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
+              <div className="text-center">
+                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
+                  <ImageIcon className="h-6 w-6 text-blue-600" />
+                </div>
+                
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No Photos Found</h3>
+                <p className="text-gray-600 mb-6">
+                  We couldn't find any photos of you in <strong>{currentEvent.name}</strong>. 
+                  Would you like to add your photos to this event?
+                </p>
+                
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => {
+                      setShowAddPhotosModal(false);
+                      setCurrentEvent(null);
+                    }}
+                    className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleAddPhotos(currentEvent)}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Add Photos
+                  </button>
+                </div>
               </div>
             </div>
           </div>

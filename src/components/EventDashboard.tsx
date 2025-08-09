@@ -348,31 +348,11 @@ const EventDashboard = (props: EventDashboardProps) => {
                 return;
             }
             
-            // Get events where user is listed as userEmail (backward compatibility)
-            const userEvents = await getUserEvents(userEmail);
-            
-            // Get events where user is the organizer
+            // Only get events where user is the organizer (organizerId field)
             const organizerEvents = await getEventsByOrganizerId(userEmail);
             
-            // Get events where user is the userId
-            const userIdEvents = await getEventsByUserId(userEmail);
-            
-            // Combine events and remove duplicates (based on eventId)
-            const allEvents = [...userEvents];
-            
-            // Add organizer events that aren't already in the list
-            organizerEvents.forEach(orgEvent => {
-                if (!allEvents.some(event => event.id === orgEvent.id)) {
-                    allEvents.push(orgEvent);
-                }
-            });
-            
-            // Add userId events that aren't already in the list
-            userIdEvents.forEach(userIdEvent => {
-                if (!allEvents.some(event => event.id === userIdEvent.id)) {
-                    allEvents.push(userIdEvent);
-                }
-            });
+            // Use only organizer events
+            const allEvents = [...organizerEvents];
             
             if (Array.isArray(allEvents)) {
                 // Calculate statistics directly from loaded events

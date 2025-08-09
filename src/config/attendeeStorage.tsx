@@ -14,6 +14,7 @@ export interface AttendeeImageData {
   matchedImages: string[];
   uploadedAt: string;
   lastUpdated: string;
+  hasUploadedPhotos?: boolean; // Flag to track if user has uploaded photos to this event
 }
 
 /**
@@ -37,13 +38,14 @@ export const storeAttendeeImageData = async (data: AttendeeImageData): Promise<b
           userId: data.userId,
           eventId: data.eventId
         },
-        UpdateExpression: 'SET selfieURL = :selfieURL, matchedImages = :matchedImages, lastUpdated = :lastUpdated, eventName = :eventName, coverImage = :coverImage',
+        UpdateExpression: 'SET selfieURL = :selfieURL, matchedImages = :matchedImages, lastUpdated = :lastUpdated, eventName = :eventName, coverImage = :coverImage, hasUploadedPhotos = :hasUploadedPhotos',
         ExpressionAttributeValues: {
           ':selfieURL': data.selfieURL,
           ':matchedImages': data.matchedImages, // Use fresh search results, don't merge
           ':lastUpdated': new Date().toISOString(),
           ':eventName': data.eventName || existingData.eventName,
-          ':coverImage': data.coverImage || existingData.coverImage
+          ':coverImage': data.coverImage || existingData.coverImage,
+          ':hasUploadedPhotos': data.hasUploadedPhotos || existingData.hasUploadedPhotos || false
         }
       });
       
@@ -63,7 +65,8 @@ export const storeAttendeeImageData = async (data: AttendeeImageData): Promise<b
         selfieURL: data.selfieURL,
         matchedImages: data.matchedImages,
         uploadedAt: data.uploadedAt,
-        lastUpdated: data.lastUpdated
+        lastUpdated: data.lastUpdated,
+        hasUploadedPhotos: data.hasUploadedPhotos || false
       }
     });
     
@@ -96,6 +99,29 @@ export const getAttendeeImagesByUserAndEvent = async (userId: string, eventId: s
   } catch (error) {
     console.error('Error getting attendee image data:', error);
     return null;
+  }
+};
+
+/**
+ * Gets events where user has photos but hasn't uploaded any photos
+ * @param userId The unique identifier for the user
+ * @returns Array of attendee image data for events where user has photos but hasn't uploaded
+ */
+export const getAttendeeImagesForViewingOnly = async (userId: string): Promise<AttendeeImageData[]> => {
+  try {
+    const allUserData = await getAllAttendeeImagesByUser(userId);
+    
+    // Filter out events where the user has uploaded photos
+    return allUserData.filter(data => {
+      // Skip default entries
+      if (data.eventId === 'default') return false;
+      
+      // Only include events where user has photos but hasn't uploaded any
+      return data.matchedImages && data.matchedImages.length > 0 && !data.hasUploadedPhotos;
+    });
+  } catch (error) {
+    console.error('Error getting attendee images for viewing only:', error);
+    return [];
   }
 };
 

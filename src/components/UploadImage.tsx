@@ -484,6 +484,19 @@ const UploadImage = () => {
         return;
       }
 
+      // Check if user has photos in this event (coming from EventPhotos page)
+      try {
+        const { getAttendeeImagesByUserAndEvent } = await import('../config/attendeeStorage');
+        const userEventData = await getAttendeeImagesByUserAndEvent(userEmail, eventId);
+        if (userEventData && userEventData.matchedImages && userEventData.matchedImages.length > 0) {
+          setIsAuthorized(true);
+          setAuthorizationMessage('You have photos in this event and can upload additional photos.');
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking user event data:', error);
+      }
+
       // User is not authorized
       setIsAuthorized(false);
       setAuthorizationMessage('You are not authorized to upload images to this event.');
@@ -594,7 +607,36 @@ const UploadImage = () => {
           // Check location state (from navigation)
           if (location.state?.eventId) {
             console.log('EventId from location state:', location.state.eventId);
+            console.log('EventName from location state:', location.state.eventName);
+            console.log('OrganizationCode from location state:', location.state.organizationCode);
             targetEventId = location.state.eventId;
+            
+            // If we have event details from location state, add them to events list
+            if (location.state.eventName) {
+              setEvents(prevEvents => {
+                const eventExists = prevEvents.some(e => e.id === location.state.eventId);
+                if (!eventExists) {
+                  const newEvent = { 
+                    id: location.state.eventId, 
+                    name: location.state.eventName 
+                  };
+                  console.log('Adding event from location state:', newEvent);
+                  return [...prevEvents, newEvent];
+                }
+                return prevEvents;
+              });
+              
+                          // Set the selected event immediately
+            setSelectedEvent(location.state.eventId);
+            setEventId(location.state.eventId);
+            localStorage.setItem('currentEventId', location.state.eventId);
+            console.log('Set selected event immediately from location state:', location.state.eventId);
+            
+            // Skip authorization check for users coming from EventPhotos page
+            // They will be authorized if they have photos in the event
+            setIsAuthorized(null); // Reset authorization state
+            setAuthorizationMessage(''); // Clear any previous messages
+            }
           }
           // Check localStorage as last resort
           else {
@@ -614,6 +656,11 @@ const UploadImage = () => {
             setEventId(targetEventId);
             setSelectedEvent(targetEventId);
             console.log('Set selected event to:', targetEventId);
+          } else if (location.state?.eventId === targetEventId) {
+            // If event is from location state but not in user events, still set it
+            setEventId(targetEventId);
+            setSelectedEvent(targetEventId);
+            console.log('Set selected event from location state:', targetEventId);
           } else {
             console.warn('Event ID from URL/state not found in user events:', targetEventId);
           }
@@ -625,6 +672,27 @@ const UploadImage = () => {
 
     initializeComponent();
   }, [location, checkEventCodeAuthorization]);
+
+  // Handle setting selected event when events list is updated
+  useEffect(() => {
+    if (selectedEvent && events.length > 0) {
+      const event = events.find(e => e.id === selectedEvent);
+      if (event) {
+        console.log('Event found in events list:', event);
+      }
+    }
+  }, [events, selectedEvent]);
+
+  // Handle authorization check when coming from EventPhotos page
+  useEffect(() => {
+    if (selectedEvent && location.state?.eventId === selectedEvent) {
+      // User came from EventPhotos page, check authorization
+      const userEmail = localStorage.getItem('userEmail');
+      if (userEmail) {
+        checkAuthorization(selectedEvent);
+      }
+    }
+  }, [selectedEvent, location.state, checkAuthorization]);
 
   // Find the current event name for display
   const getSelectedEventName = () => {
@@ -787,7 +855,8 @@ const UploadImage = () => {
       const timeoutMultiplier = Math.ceil(file.size / (1024 * 1024)); // 1 second per MB
       const currentTimeout = UPLOAD_TIMEOUT * timeoutMultiplier;
 
-      const uploadPromise = uploadToS3(file, sanitizedFileName).catch(error => {
+      console.log('[DEBUG] UploadImage.tsx: Using event ID for upload:', selectedEvent);
+      const uploadPromise = uploadToS3(file, sanitizedFileName, selectedEvent).catch(error => {
         // Classify S3 errors
         const s3Error: UploadError = {
           type: UPLOAD_ERROR_TYPES.S3_ERROR,
@@ -1413,6 +1482,37 @@ const UploadImage = () => {
       setTotalSize(0);
       setUploadedUrls(allUploadedUrls);
       setShowQRModal(true); // Show QR modal after progress bar is hidden
+
+      // Mark that user has uploaded photos to this event
+      if (userEmail && selectedEvent) {
+        try {
+          const { getAttendeeImagesByUserAndEvent, storeAttendeeImageData } = await import('../config/attendeeStorage');
+          const existingData = await getAttendeeImagesByUserAndEvent(userEmail, selectedEvent);
+          
+          if (existingData) {
+            // Update the existing record to mark that user has uploaded photos
+            await storeAttendeeImageData({
+              ...existingData,
+              hasUploadedPhotos: true,
+              lastUpdated: new Date().toISOString()
+            });
+          } else {
+            // Create a new record to mark that user has uploaded photos
+            await storeAttendeeImageData({
+              userId: userEmail,
+              eventId: selectedEvent,
+              eventName: getSelectedEventName(),
+              selfieURL: '', // Will be set when user takes selfie
+              matchedImages: [], // Will be populated when photos are processed
+              uploadedAt: new Date().toISOString(),
+              lastUpdated: new Date().toISOString(),
+              hasUploadedPhotos: true
+            });
+          }
+        } catch (error) {
+          console.error('Error marking user as uploader:', error);
+        }
+      }
 
       // Update DynamoDB with new image count
       // await fetch('http://localhost:3001/events/update-image-sizes', {
@@ -2660,13 +2760,17 @@ async function compressImage(file: File, quality = 0.8, branding = false, logoUr
 }
 
 // Add uploadToS3 function before the UploadImage component
-const uploadToS3 = async (file: File, fileName: string): Promise<string> => {
+const uploadToS3 = async (file: File, fileName: string, eventId?: string): Promise<string> => {
   try {
     const { bucketName } = await validateEnvVariables();
     const s3Client = await s3ClientPromise;
-    const eventId = localStorage.getItem('currentEventId');
+    const currentEventId = eventId || localStorage.getItem('currentEventId');
     
-    if (!eventId) {
+    console.log('[DEBUG] UploadImage.tsx: uploadToS3 received eventId:', eventId);
+    console.log('[DEBUG] UploadImage.tsx: localStorage currentEventId:', localStorage.getItem('currentEventId'));
+    console.log('[DEBUG] UploadImage.tsx: Using currentEventId:', currentEventId);
+    
+    if (!currentEventId) {
       throw new Error('No event ID found');
     }
 
@@ -2680,7 +2784,7 @@ const uploadToS3 = async (file: File, fileName: string): Promise<string> => {
       finalFileName = `${nameWithoutExt}.jpg`;
     }
     
-    const key = `events/shared/${eventId}/images/${finalFileName}`;
+    const key = `events/shared/${currentEventId}/images/${finalFileName}`;
 
     console.log('[DEBUG] UploadImage.tsx: Uploading file with:', {
       originalName: fileName,

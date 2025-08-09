@@ -467,13 +467,13 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
         const { bucketName } = await validateEnvVariables();
 
         // Dynamically import required modules
-        const { getAllAttendeeImagesByUser, getAttendeeStatistics } = await import('../config/attendeeStorage');
+        const { getAllAttendeeImagesByUser, getAttendeeStatistics, getAttendeeImagesForViewingOnly } = await import('../config/attendeeStorage');
         const { getEventById } = await import('../config/eventStorage');
             
         // If user is signed in, fetch their data
         if (userEmail) {
-          // Fetch attendee image data from the database
-          const attendeeImageData = await getAllAttendeeImagesByUser(userEmail);
+          // Fetch attendee image data from the database (excluding events where user has uploaded photos)
+          const attendeeImageData = await getAttendeeImagesForViewingOnly(userEmail);
           
           // Get statistics
           const userStats = await getAttendeeStatistics(userEmail);
