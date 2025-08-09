@@ -125,8 +125,8 @@ const App = () => {
       <UserContext.Provider value={{ userEmail, userRole, setUserEmail, setUserRole }}>
         <Router>
           <Helmet>
-            <title>Chitralai</title>
-            <meta name="description" content="Chitralai helps event organizers and attendees easily upload, discover, and share photos using AI-powered face recognition and smart galleries." />
+            <title>chitralai</title>
+            <meta name="description" content="chitralai helps event organizers and attendees easily upload, discover, and share photos using AI-powered face recognition and smart galleries." />
           </Helmet>
           {showSignInModal && <Login />}
           <div className="min-h-screen bg-white">
@@ -152,13 +152,13 @@ const App = () => {
                   <FAQ />
                 </div>
               } />
-              <Route path="/events" element={<div className="animate-slideIn"><SEO title="Events" description="Browse and manage your events on Chitralai." canonicalPath="/events" /><EventDashboard setShowNavbar={setShowNavbar} /></div>} />
-              <Route path="/event/:eventId" element={<div className="animate-slideIn"><SEO title="Event" description="View event details and photos on Chitralai." /><EventDetail eventId={useParams().eventId || ''} /></div>} />
+              <Route path="/events" element={<div className="animate-slideIn"><SEO title="Events" description="Browse and manage your events on chitralai." canonicalPath="/events" /><EventDashboard setShowNavbar={setShowNavbar} /></div>} />
+              <Route path="/event/:eventId" element={<div className="animate-slideIn"><SEO title="Event" description="View event details and photos on chitralai." /><EventDetail eventId={useParams().eventId || ''} /></div>} />
               <Route path="/attendee-dashboard" element={<div className="animate-slideIn"><SEO title="Attendee Dashboard" description="Access your personalized event photo dashboard." canonicalPath="/attendee-dashboard" /><AttendeeDashboard setShowSignInModal={setShowSignInModal} /></div>} />
               <Route path="/event-photos/:eventId" element={<div className="animate-slideIn"><SEO title="Event Photos" description="Explore photos from your event." /><EventPhotos /></div>} />
-              <Route path="/my-photos" element={<div className="animate-slideIn"><SEO title="My Photos" description="Your personal photo gallery on Chitralai." canonicalPath="/my-photos" /><MyPhotos /></div>} />
-              <Route path="/upload" element={<div className="animate-slideIn"><SEO title="Upload Photos" description="Upload event photos to Chitralai securely and quickly." canonicalPath="/upload" /><UploadImage /></div>} />
-              <Route path="/upload-image" element={<div className="animate-slideIn"><SEO title="Upload Photos" description="Upload event photos to Chitralai securely and quickly." canonicalPath="/upload-image" /><UploadImage /></div>} />
+              <Route path="/my-photos" element={<div className="animate-slideIn"><SEO title="My Photos" description="Your personal photo gallery on chitralai." canonicalPath="/my-photos" /><MyPhotos /></div>} />
+              <Route path="/upload" element={<div className="animate-slideIn"><SEO title="Upload Photos" description="Upload event photos to chitralai securely and quickly." canonicalPath="/upload" /><UploadImage /></div>} />
+              <Route path="/upload-image" element={<div className="animate-slideIn"><SEO title="Upload Photos" description="Upload event photos to chitralai securely and quickly." canonicalPath="/upload-image" /><UploadImage /></div>} />
               
               <Route path="/view-event/:eventId" element={<div className="animate-slideIn"><ViewEventWrapper /></div>} />
               <Route path="/my-organizations" element={<div className="animate-slideIn"><MyOrganizations setShowSignInModal={setShowSignInModal} /></div>} />
@@ -167,7 +167,7 @@ const App = () => {
               
               <Route path="/organization/:organizationCode" element={
                 <div className="animate-slideIn">
-                  <SEO title="Organization" description="View organization events on Chitralai." />
+                  <SEO title="Organization" description="View organization events on chitralai." />
                   <OrganizationEvents 
                     organizationCode={useParams().organizationCode || ''} 
                     organizationName="" 
