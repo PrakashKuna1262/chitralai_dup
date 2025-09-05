@@ -24,6 +24,7 @@ import Profile from './components/Profile';
 import Settings from './components/Settings';
 import { queryUserByEmail, storeUserCredentials } from './config/dynamodb';
 import { migrateLocalStorageToDb } from './config/eventStorage';
+import { isSessionValid, updateLastActivity } from './config/auth';
 import Login from './components/Login';
 import Terms from './pages/Terms';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -48,6 +49,26 @@ const App = () => {
   const [showSignInModal, setShowSignInModal] = React.useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem('userEmail'));
   const [userRole, setUserRole] = useState<string | null>(null);
+
+  // Check session validity on app load
+  useEffect(() => {
+    const checkSessionValidity = () => {
+      const email = localStorage.getItem('userEmail');
+      if (email) {
+        if (!isSessionValid()) {
+          console.log('Initial session check: Session expired, clearing user data');
+          localStorage.clear();
+          setUserEmail(null);
+          setUserRole(null);
+        } else {
+          console.log('Initial session check: Session valid, updating activity');
+          updateLastActivity();
+        }
+      }
+    };
+
+    checkSessionValidity();
+  }, []);
 
   // Ensure user exists in DynamoDB
   const ensureUserInDb = async (email: string) => {
@@ -103,6 +124,18 @@ const App = () => {
     const fetchUserRole = async () => {
       if (userEmail) {
         try {
+          // Check if session is still valid
+          if (!isSessionValid()) {
+            console.log('Session expired, logging out user');
+            setUserEmail(null);
+            setUserRole(null);
+            localStorage.clear();
+            return;
+          }
+          
+          // Update last activity
+          updateLastActivity();
+          
           // Migrate any existing localStorage data to DynamoDB
           await migrateLocalStorageToDb(userEmail);
           

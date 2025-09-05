@@ -247,7 +247,10 @@ const PhoneVerification: React.FC<PhoneVerificationProps> = ({
             text="continue_with"
             shape="rectangular"
             logo_alignment="left"
-            
+            fedcm={false}
+            auto_select={false}
+            cancel_on_tap_outside={true}
+            prompt_parent_id="phone-verification-google-login"
           />
         </div>
       </div>

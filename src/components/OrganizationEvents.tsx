@@ -411,14 +411,16 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
             {events.map((event) => (
               <div
                 key={event.id}
-                className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 cursor-pointer transform hover:-translate-y-1"
+                className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 cursor-pointer"
+                onClick={() => handleViewPhotos(event)}
+                title={`Click to view photos from ${event.name}`}
               >
                 {/* Cover Image Container with Fixed Height */}
                 <div className="relative h-40 sm:h-48 w-full overflow-hidden">
                   <img
                     src={event.thumbnailUrl}
                     alt={event.name}
-                    className="absolute inset-0 w-full h-full object-cover transform hover:scale-105 transition-transform duration-300"
+                    className="absolute inset-0 w-full h-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                 </div>
@@ -440,7 +442,10 @@ const OrganizationEvents: React.FC<OrganizationEventsProps> = ({
                     
                     {/* View Photos Button */}
                     <button
-                      onClick={() => handleViewPhotos(event)}
+                      onClick={(e) => {
+                        e.stopPropagation(); // Prevent card click when button is clicked
+                        handleViewPhotos(event);
+                      }}
                       disabled={processingEventId !== null}
                       className={`w-full mt-1 sm:mt-2 px-3 sm:px-4 py-1.5 sm:py-2 ${processingEventId === event.id ? 'bg-blue-400' : 'bg-blue-600'} text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center`}
                     >

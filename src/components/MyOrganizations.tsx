@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { Search, Building2, AlertCircle } from 'lucide-react';
+import { Search, Building2, AlertCircle, Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { 
   queryUserByOrganizationCode, 
@@ -265,7 +265,9 @@ const MyOrganizations: React.FC<MyOrganizationsProps> = ({ setShowSignInModal })
               {organizations.map((org) => (
                 <div
                   key={org.organizationCode}
-                  className="bg-blue-50 rounded-lg overflow-hidden border border-blue-100 hover:shadow-lg transition-all duration-300"
+                  className="bg-blue-50 rounded-lg overflow-hidden border border-blue-100 hover:shadow-lg transition-all duration-300 cursor-pointer"
+                  onClick={() => handleViewEvents(org)}
+                  title={`Click to view events from ${org.organizationName}`}
                 >
                   <div className="aspect-w-16 aspect-h-9 bg-white relative h-48">
                     {org.organizationLogo ? (
@@ -294,10 +296,8 @@ const MyOrganizations: React.FC<MyOrganizationsProps> = ({ setShowSignInModal })
                     </p>
                     <div className="mt-4 flex justify-between">
                       <button
-                        onClick={() => {
-                          const path = `/organization/${org.organizationCode}/events`;
-                          console.log(path);
-                          localStorage.setItem('path', path);
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent card click when button is clicked
                           handleViewEvents(org);
                         }}
                         className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -305,7 +305,10 @@ const MyOrganizations: React.FC<MyOrganizationsProps> = ({ setShowSignInModal })
                         View Events
                       </button>
                       <button
-                        onClick={() => handleDelete(org.organizationCode)}
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent card click when button is clicked
+                          handleDelete(org.organizationCode);
+                        }}
                         disabled={loading}
                         className="px-4 py-2 text-sm bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-50"
                       >

@@ -9,6 +9,31 @@
       gtag('config', 'G-JJPLQ436FM');
     </script>
 
+    <!-- Disable FedCM to prevent Google Sign-In issues -->
+    <script>
+      // Disable FedCM globally to prevent credential retrieval errors
+      if ('IdentityCredential' in window) {
+        // Override the get method to prevent FedCM from working
+        const originalGet = window.IdentityCredential.prototype.get;
+        window.IdentityCredential.prototype.get = function(options) {
+          console.warn('FedCM disabled - falling back to traditional Google Sign-In');
+          return Promise.reject(new Error('FedCM disabled'));
+        };
+      }
+      
+      // Disable navigator.credentials.get for FedCM
+      if ('credentials' in navigator && 'get' in navigator.credentials) {
+        const originalGet = navigator.credentials.get;
+        navigator.credentials.get = function(options) {
+          if (options && options.identity) {
+            console.warn('FedCM credentials.get disabled - falling back to traditional Google Sign-In');
+            return Promise.reject(new Error('FedCM disabled'));
+          }
+          return originalGet.call(this, options);
+        };
+      }
+    </script>
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/chitralai-t.png" type="image/png" />

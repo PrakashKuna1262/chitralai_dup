@@ -9,7 +9,7 @@ import { UserContext } from '../App';
 import PhoneVerification from './PhoneVerification';
 import { s3ClientPromise, getOrganizationLogoPath, getOrganizationLogoUrl, ensureFolderStructure, getOrganizationFolderPath, validateEnvVariables } from '../config/aws';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { setupTokenRefresh, clearTokenRefresh, shouldRefreshToken } from '../config/auth';
+import { setupTokenRefresh, clearTokenRefresh, shouldRefreshToken, isSessionValid, updateLastActivity } from '../config/auth';
 // ProfileDropdown is now only used in the desktop view
 import ProfileDropdown from './ProfileDropdown';
 import { docClientPromise, ATTENDEE_ORG_TABLE } from '../config/dynamodb';
@@ -533,6 +533,9 @@ const Navbar: React.FC<NavbarProps> = ({
         localStorage.setItem('organizationCode', organizationCode);
       }
       
+      // Set last activity timestamp for session management
+      updateLastActivity();
+      
       localStorage.setItem('userProfile', JSON.stringify({
         name,
         email,
@@ -594,11 +597,11 @@ const Navbar: React.FC<NavbarProps> = ({
           if (userEvents && userEvents.length > 0) {
             navigate('/events');
           } else {
-            navigate('/'); // Go to Hero/home if no events
+            navigate('/attendee-dashboard'); // Go to attendee-dashboard if no events
           }
         } catch (err) {
           console.error('Error fetching user events after login:', err);
-          navigate('/');
+          navigate('/attendee-dashboard'); // Default to attendee-dashboard on error
         }
       }
       if (userData.organizationCode) {
@@ -877,6 +880,74 @@ const Navbar: React.FC<NavbarProps> = ({
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
+
+  // Check if user is logged in on component mount
+  useEffect(() => {
+    const checkUserLoginStatus = () => {
+      const email = localStorage.getItem('userEmail');
+      const userProfileStr = localStorage.getItem('userProfile');
+      
+      if (email && userProfileStr) {
+        try {
+          // Check if session is still valid
+          if (isSessionValid()) {
+            const userProfile = JSON.parse(userProfileStr);
+            setUserProfile(userProfile);
+            setUserEmail(email);
+            setIsLoggedIn(true);
+            
+            // Update last activity
+            updateLastActivity();
+            
+            // Check user role
+            const role = localStorage.getItem('userRole') || 'attendee';
+            setUserRole(role);
+            
+            // Set up token refresh if needed
+            const token = localStorage.getItem('googleToken');
+            const refreshToken = localStorage.getItem('refreshToken');
+            
+            if (token && refreshToken) {
+              if (tokenRefreshInterval.current) {
+                clearTokenRefresh(tokenRefreshInterval.current);
+              }
+              tokenRefreshInterval.current = setupTokenRefresh(token, refreshToken);
+            }
+          } else {
+            // Session expired, log out user
+            console.log('Session expired, logging out user');
+            handleLogout();
+          }
+        } catch (error) {
+          console.error('Error parsing user profile:', error);
+          handleLogout();
+        }
+      }
+    };
+
+    checkUserLoginStatus();
+  }, []);
+
+  // Track user activity to extend session
+  useEffect(() => {
+    const updateActivity = () => {
+      if (isLoggedIn) {
+        updateLastActivity();
+      }
+    };
+
+    // Update activity on user interactions
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    events.forEach(event => {
+      document.addEventListener(event, updateActivity, true);
+    });
+
+    return () => {
+      events.forEach(event => {
+        document.removeEventListener(event, updateActivity, true);
+      });
+    };
+  }, [isLoggedIn]);
 
   return (              
     <header 

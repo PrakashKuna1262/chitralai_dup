@@ -1,16 +1,34 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import GoogleLogin from './GoogleLogin';
+import { jwtDecode } from 'jwt-decode';
 
 const Login = () => {
   const navigate = useNavigate();
 
-  const handleLoginSuccess = (credentialResponse: any) => {
+  const handleLoginSuccess = async (credentialResponse: any) => {
     try {
       console.log('Login Success:', credentialResponse);
-      navigate('/events');
+      
+      // Check if user has events and redirect accordingly
+      const decoded: any = jwtDecode(credentialResponse.credential);
+      const email = decoded.email || '';
+      
+      try {
+        const { getUserEvents } = await import('../config/eventStorage');
+        const userEvents = await getUserEvents(email);
+        if (userEvents && userEvents.length > 0) {
+          navigate('/events');
+        } else {
+          navigate('/attendee-dashboard');
+        }
+      } catch (err) {
+        console.error('Error fetching user events after login:', err);
+        navigate('/attendee-dashboard');
+      }
     } catch (error) {
       console.error('Error during login:', error);
+      navigate('/attendee-dashboard');
     }
   };
 

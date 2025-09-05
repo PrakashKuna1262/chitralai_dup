@@ -174,6 +174,8 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
   
   // New state variables for event code entry and selfie upload
   const [eventCode, setEventCode] = useState('');
+  const [searchMode, setSearchMode] = useState<'event' | 'organization'>('event');
+  const [organizationCode, setOrganizationCode] = useState('');
   const [eventDetails, setEventDetails] = useState<{ id: string; name: string; date: string } | null>(null);
   const [selfie, setSelfie] = useState<File | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
@@ -702,6 +704,46 @@ const AttendeeDashboard: React.FC<AttendeeDashboardProps> = ({ setShowSignInModa
     } catch (error: any) {
       console.error('Error finding event:', error);
       setError(error.message || 'Failed to find event. Please try again.');
+      setProcessingStatus(null);
+    }
+  };
+
+  // Handle organization code form submission
+  const handleOrganizationCodeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessMessage(null);
+    
+    if (!organizationCode.trim()) {
+      setError('Please enter an organization code');
+      return;
+    }
+    
+    try {
+      setProcessingStatus('Joining organization...');
+      console.log('Joining organization with code:', organizationCode);
+      
+      // Get user email if available
+      const userEmail = localStorage.getItem('userEmail');
+      
+      // If user is not signed in, show sign-in modal
+      if (!userEmail) {
+        setProcessingStatus(null);
+        setError('Please sign in to join an organization.');
+        // Store organization code for redirect after sign in
+        localStorage.setItem('pendingAction', 'joinOrganization');
+        localStorage.setItem('pendingOrganizationCode', organizationCode);
+        // Show sign in modal
+        setShowSignInModal(true);
+        return;
+      }
+      
+      // Navigate to MyOrganizations page with the organization code
+      navigate(`/my-organizations?code=${organizationCode}`);
+      
+    } catch (error: any) {
+      console.error('Error joining organization:', error);
+      setError(error.message || 'Failed to join organization. Please try again.');
       setProcessingStatus(null);
     }
   };
@@ -1437,10 +1479,35 @@ console.log(`User ${userEmail} downloading image`);
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-8">
           {/* Event Code Entry Section */}
           <div className="bg-white rounded-lg shadow-sm p-4 sm:p-6 h-full">
-            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-3 sm:mb-4">Enter Event Code</h2>
-            <p className="text-sm text-gray-600 mb-3 sm:mb-4">
+            <p className="text-lg sm:text-xl font-semibold text-blue-600 mb-3 sm:mb-4 text-center">
               Find your photos from events
             </p>
+            
+            {/* Mode Selection Buttons */}
+            <div className="flex space-x-2 mb-4">
+              <button
+                type="button"
+                onClick={() => setSearchMode('event')}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  searchMode === 'event'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Event Code
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode('organization')}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  searchMode === 'organization'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Organization Code
+              </button>
+            </div>
             
             {error && (
               <div className="bg-red-50 text-red-600 p-2 rounded-lg mb-3 text-sm">
@@ -1455,13 +1522,15 @@ console.log(`User ${userEmail} downloading image`);
               </div>
             )}
             
+            {/* Event Code Search Form */}
+            {searchMode === 'event' && (
             <form onSubmit={handleEventCodeSubmit}>
               <div className="flex space-x-2">
                 <input
                   type="text"
                   value={eventCode}
                   onChange={(e) => setEventCode(e.target.value)}
-                  placeholder="Event code"
+                    placeholder="Enter event code"
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:text-base"
                   required
                 />
@@ -1475,6 +1544,31 @@ console.log(`User ${userEmail} downloading image`);
                 </button>
               </div>
             </form>
+            )}
+            
+            {/* Organization Code Search Form */}
+            {searchMode === 'organization' && (
+              <form onSubmit={handleOrganizationCodeSubmit}>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={organizationCode}
+                    onChange={(e) => setOrganizationCode(e.target.value)}
+                    placeholder="Enter organization code"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:text-base"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center text-sm sm:text-base whitespace-nowrap"
+                    disabled={isUploading}
+                  >
+                    <Search className="w-4 h-4 mr-1" />
+                    Join
+                  </button>
+                </div>
+              </form>
+            )}
             
             {eventDetails && !selfieUrl && (
               <div className="border border-blue-200 bg-blue-50 p-3 rounded-lg mt-4">
@@ -1726,6 +1820,7 @@ console.log(`User ${userEmail} downloading image`);
                     key={event.eventId}
                     className="bg-white rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow border border-gray-200 cursor-pointer"
                     onClick={() => handleEventClick(event.eventId)}
+                    title={`Click to view photos from ${event.eventName}`}
                   >
                     <div className="aspect-square relative">
                       <img

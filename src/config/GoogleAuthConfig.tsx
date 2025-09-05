@@ -62,6 +62,14 @@ export const GoogleAuthConfig: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
+    // Check FedCM support and log status
+    console.log('[GoogleAuthConfig] FedCM Support Check:', {
+      hasIdentityCredential: 'IdentityCredential' in window,
+      hasCredentialsGet: 'credentials' in navigator && 'get' in navigator.credentials,
+      currentOrigin: currentOrigin,
+      allowedOrigins: ALLOWED_ORIGINS
+    });
+
     // Handle potential Google Sign-In errors gracefully
     const originalError = console.error;
     console.error = (...args) => {
@@ -71,7 +79,10 @@ export const GoogleAuthConfig: React.FC<{ children: React.ReactNode }> = ({ chil
         typeof args[0] === 'string' && 
         (args[0].includes('GSI_LOGGER') || 
          args[0].includes('Failed to execute \'postMessage\'') ||
-         args[0].includes('Error retrieving a token'))
+         args[0].includes('Error retrieving a token') ||
+         args[0].includes('FedCM get() rejects') ||
+         args[0].includes('IdentityCredentialError') ||
+         args[0].includes('FedCM disabled'))
       ) {
         // Log warning instead of error in development
         if (import.meta.env.DEV) {
@@ -144,6 +155,11 @@ export const GoogleAuthConfig: React.FC<{ children: React.ReactNode }> = ({ chil
       onScriptLoadError={() => {
         console.error("Google Sign-In script failed to load");
       }}
+      // Completely disable FedCM to prevent token retrieval errors
+      fedcm={false}
+      // Additional configuration to force traditional auth
+      auto_select={false}
+      cancel_on_tap_outside={true}
     >
       {children}
     </GoogleOAuthProvider>
