@@ -1770,12 +1770,11 @@ const UploadImage = () => {
 
       const result = await response.json();
       
-      if (!result.success) {
-        throw new Error(result.error || 'Upload failed');
-      }
+      // Handle the response based on the actual structure
+      console.log('Drive upload response:', result);
 
-      if (result.successful === 0) {
-        setPopup({ type: 'warning', message: 'No images were found or processed from the provided Drive folder.' });
+      if (!result.success) {
+        setPopup({ type: 'error', message: result.message || result.error || 'Upload failed' });
         setIsDriveUploading(false);
         setDriveUploadResult('error');
         setDriveFillProgress(100);
@@ -1786,16 +1785,34 @@ const UploadImage = () => {
         return;
       }
 
-      // Extract successful upload URLs
-      const allUploadedUrls = result.successfulFiles.map((file: any) => file.s3Url);
+      // Extract uploaded URLs - handle different response structures
+      let allUploadedUrls = [];
       
-      console.log('Drive upload completed:', {
-        total: result.totalFiles,
-        successful: result.successful,
-        failed: result.failed,
-        totalOriginalBytes: result.totalOriginalBytes,
-        totalCompressedBytes: result.totalCompressedBytes
-      });
+      if (result.testFile && result.testFile.s3Url) {
+        // Single file upload (fixed version)
+        allUploadedUrls = [result.testFile.s3Url];
+        console.log('Single file upload successful:', result.testFile);
+      } else if (result.successfulFiles && Array.isArray(result.successfulFiles)) {
+        // Multiple files upload (original version)
+        allUploadedUrls = result.successfulFiles.map((file: any) => file.s3Url);
+        console.log('Multiple files upload successful:', result.successfulFiles);
+      } else if (result.results && Array.isArray(result.results)) {
+        // Alternative structure
+        allUploadedUrls = result.results.map((file: any) => file.s3Url || file.url).filter(Boolean);
+        console.log('Alternative structure upload successful:', result.results);
+      }
+
+      if (allUploadedUrls.length === 0) {
+        setPopup({ type: 'warning', message: 'No files were uploaded successfully.' });
+        setIsDriveUploading(false);
+        setDriveUploadResult('error');
+        setDriveFillProgress(100);
+        driveProgressTimeout.current = setTimeout(() => {
+          setDriveUploadResult('idle');
+          setDriveFillProgress(0);
+        }, 3000);
+        return;
+      }
 
       setUploadedUrls(allUploadedUrls);
       setGoogleDriveLink('');
@@ -1806,7 +1823,7 @@ const UploadImage = () => {
       
       setPopup({
         type: 'success',
-        message: `Upload success! ${result.successful} images processed and uploaded.`
+        message: `Upload success! ${allUploadedUrls.length} image(s) processed and uploaded.`
       });
       setDriveUploadResult('success');
       setDriveUploadProgress(100);
@@ -1822,16 +1839,6 @@ const UploadImage = () => {
           clearInterval(fillInterval);
         }
       }, 20);
-
-      // Show success message with statistics
-      if (result.failed > 0) {
-        setTimeout(() => {
-          setPopup({
-            type: 'warning',
-            message: `Upload completed with ${result.successful} successful and ${result.failed} failed uploads.`
-          });
-        }, 2000);
-      }
 
     } catch (error: any) {
       console.error('Drive upload error:', error);
