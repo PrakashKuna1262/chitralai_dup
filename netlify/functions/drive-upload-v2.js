@@ -10,61 +10,45 @@ const s3 = new AWS.S3({
 
 const BUCKET = process.env.VITE_S3_BUCKET_NAME;
 
-// Helper function to get Google service account credentials
-function getGoogleCredentials() {
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
-  
-  if (!privateKey) {
-    throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set');
-  }
-
-  // Clean up the private key - remove any extra whitespace and ensure proper formatting
-  let cleanedPrivateKey = privateKey.trim();
-  
-  // If the key doesn't start with -----BEGIN, it might be missing the header
-  if (!cleanedPrivateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
-    cleanedPrivateKey = '-----BEGIN PRIVATE KEY-----\n' + cleanedPrivateKey;
-  }
-  
-  // If the key doesn't end with -----END, it might be missing the footer
-  if (!cleanedPrivateKey.endsWith('-----END PRIVATE KEY-----')) {
-    cleanedPrivateKey = cleanedPrivateKey + '\n-----END PRIVATE KEY-----';
-  }
-  
-  // Replace any \n with actual newlines
-  cleanedPrivateKey = cleanedPrivateKey.replace(/\\n/g, '\n');
-
-  console.log('Private key format check:', {
-    startsWithBegin: cleanedPrivateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
-    endsWithEnd: cleanedPrivateKey.endsWith('-----END PRIVATE KEY-----'),
-    containsNewlines: cleanedPrivateKey.includes('\n'),
-    length: cleanedPrivateKey.length
-  });
-
-  return {
-    type: "service_account",
-    project_id: "chitralai-471306",
-    private_key_id: "3c1c89d7d926705d71bb5103feacb91c501dfe9c",
-    private_key: cleanedPrivateKey,
-    client_email: "chitralai@chitralai-471306.iam.gserviceaccount.com",
-    client_id: "109516327096676132866",
-    auth_uri: "https://accounts.google.com/o/oauth2/auth",
-    token_uri: "https://oauth2.googleapis.com/token",
-    auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
-    client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/chitralai%40chitralai-471306.iam.gserviceaccount.com",
-    universe_domain: "googleapis.com"
-  };
-}
-
-// Initialize Google Drive API
+// Initialize Google Drive API with alternative approach
 async function initializeDriveAPI() {
   try {
-    const credentials = getGoogleCredentials();
-    const auth = new google.auth.GoogleAuth({
-      credentials: credentials,
-      scopes: ['https://www.googleapis.com/auth/drive.readonly']
-    });
+    // Try using the service account key directly as a JSON string
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
     
+    if (!privateKey) {
+      throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set');
+    }
+
+    // Create the service account key object
+    const serviceAccountKey = {
+      type: "service_account",
+      project_id: "chitralai-471306",
+      private_key_id: "3c1c89d7d926705d71bb5103feacb91c501dfe9c",
+      private_key: privateKey,
+      client_email: "chitralai@chitralai-471306.iam.gserviceaccount.com",
+      client_id: "109516327096676132866",
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+      client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/chitralai%40chitralai-471306.iam.gserviceaccount.com",
+      universe_domain: "googleapis.com"
+    };
+
+    console.log('Service account key created, attempting authentication...');
+
+    // Use JWT authentication instead of GoogleAuth
+    const auth = new google.auth.JWT(
+      serviceAccountKey.client_email,
+      null,
+      serviceAccountKey.private_key,
+      ['https://www.googleapis.com/auth/drive.readonly']
+    );
+
+    // Test the authentication
+    await auth.authorize();
+    console.log('JWT authentication successful');
+
     return google.drive({ version: 'v3', auth });
   } catch (error) {
     console.error('Error initializing Google Drive API:', error);
@@ -153,7 +137,7 @@ exports.handler = async function(event, context) {
   }
 
   try {
-    console.log('Drive upload function called');
+    console.log('Drive upload v2 function called');
     
     // Parse request body
     const body = JSON.parse(event.body || '{}');
@@ -203,7 +187,7 @@ exports.handler = async function(event, context) {
 
     // Initialize Google Drive API
     const driveAPI = await initializeDriveAPI();
-    console.log('Google Drive API initialized');
+    console.log('Google Drive API initialized successfully');
 
     // Extract file or folder ID from the link
     const fileMatch = driveLink.match(/file\/d\/([\w-]+)/);
@@ -293,13 +277,14 @@ exports.handler = async function(event, context) {
         headers: corsHeaders,
         body: JSON.stringify({ 
           error: 'Error processing file', 
-          details: processError.message 
+          details: processError.message,
+          stack: processError.stack
         })
       };
     }
 
   } catch (error) {
-    console.error('Error in drive-upload-simple function:', error);
+    console.error('Error in drive-upload-v2 function:', error);
     return {
       statusCode: 500,
       headers: corsHeaders,
