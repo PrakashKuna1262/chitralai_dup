@@ -30,18 +30,26 @@ const ddbClient = new DynamoDBClient({
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 
 // Google Service Account credentials
-const GOOGLE_SERVICE_ACCOUNT_KEY = {
-  "type": "service_account",
-  "project_id": "chitralai-471306",
-  "private_key_id": "your_private_key_id",
-  "private_key": `-----BEGIN PRIVATE KEY-----\n${process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')}\n-----END PRIVATE KEY-----`,
-  "client_email": "chitralai@chitralai-471306.iam.gserviceaccount.com",
-  "client_id": "your_client_id",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/chitralai%40chitralai-471306.iam.gserviceaccount.com"
-};
+function getGoogleServiceAccountKey() {
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+  if (!privateKey) {
+    throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set');
+  }
+
+  return {
+    "type": "service_account",
+    "project_id": "chitralai-471306",
+    "private_key_id": "3c1c89d7d926705d71bb5103feacb91c501dfe9c",
+    "private_key": privateKey.replace(/\\n/g, '\n'),
+    "client_email": "chitralai@chitralai-471306.iam.gserviceaccount.com",
+    "client_id": "109516327096676132866",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/chitralai%40chitralai-471306.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+  };
+}
 
 // Initialize Google Drive API
 let drive;
@@ -50,8 +58,9 @@ async function initializeDriveAPI() {
   if (drive) return drive;
   
   try {
+    const credentials = getGoogleServiceAccountKey();
     const auth = new google.auth.GoogleAuth({
-      credentials: GOOGLE_SERVICE_ACCOUNT_KEY,
+      credentials: credentials,
       scopes: ['https://www.googleapis.com/auth/drive.readonly']
     });
     
@@ -420,6 +429,35 @@ exports.handler = async function(event, context) {
     };
   }
 
+  // Validate environment variables
+  try {
+    if (!process.env.GOOGLE_PRIVATE_KEY) {
+      throw new Error('GOOGLE_PRIVATE_KEY environment variable is not set');
+    }
+    if (!process.env.VITE_AWS_REGION) {
+      throw new Error('VITE_AWS_REGION environment variable is not set');
+    }
+    if (!process.env.VITE_S3_BUCKET_NAME) {
+      throw new Error('VITE_S3_BUCKET_NAME environment variable is not set');
+    }
+    if (!process.env.VITE_AWS_ACCESS_KEY_ID) {
+      throw new Error('VITE_AWS_ACCESS_KEY_ID environment variable is not set');
+    }
+    if (!process.env.VITE_AWS_SECRET_ACCESS_KEY) {
+      throw new Error('VITE_AWS_SECRET_ACCESS_KEY environment variable is not set');
+    }
+  } catch (envError) {
+    console.error('Environment validation error:', envError);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({ 
+        error: 'Server configuration error', 
+        details: envError.message 
+      })
+    };
+  }
+
   try {
     const body = JSON.parse(event.body || '{}');
     const { driveLink, eventId } = body;
@@ -441,6 +479,21 @@ exports.handler = async function(event, context) {
     }
 
     console.log('Processing drive upload for event:', eventId);
+
+    // Initialize Google Drive API first
+    try {
+      await initializeDriveAPI();
+    } catch (driveError) {
+      console.error('Failed to initialize Google Drive API:', driveError);
+      return {
+        statusCode: 500,
+        headers: corsHeaders,
+        body: JSON.stringify({ 
+          error: 'Failed to initialize Google Drive API', 
+          details: driveError.message 
+        })
+      };
+    }
 
     // Extract file or folder ID from the link
     const fileMatch = driveLink.match(/file\/d\/([\w-]+)/);
