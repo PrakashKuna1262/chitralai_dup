@@ -1747,8 +1747,8 @@ const UploadImage = () => {
     try {
       console.log('Starting Google Drive upload process...');
       
-      // Use the v2 drive-upload endpoint with JWT authentication
-      const response = await fetch(`${getBackendUrl()}/drive-upload-v2`, {
+      // Use the fixed drive-upload endpoint (no JWT, no private key issues)
+      const response = await fetch(`${getBackendUrl()}/drive-upload-fixed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
