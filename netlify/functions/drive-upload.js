@@ -1,6 +1,8 @@
-const AWS = require('aws-sdk');
-const sharp = require('sharp');
-const fetch = require('node-fetch');
+import AWS from 'aws-sdk';
+import { google } from 'googleapis';
+import sharp from 'sharp';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 // Initialize AWS clients
 const s3 = new AWS.S3({
@@ -17,20 +19,69 @@ const rekognition = new AWS.Rekognition({
 
 const BUCKET = process.env.VITE_S3_BUCKET_NAME;
 
+// Initialize DynamoDB client
+const ddbClient = new DynamoDBClient({
+  region: process.env.VITE_AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.VITE_AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.VITE_AWS_SECRET_ACCESS_KEY
+  }
+});
+const docClient = DynamoDBDocumentClient.from(ddbClient);
+
+// Google Service Account credentials
+const GOOGLE_SERVICE_ACCOUNT_KEY = {
+  "type": "service_account",
+  "project_id": "chitralai-471306",
+  "private_key_id": "your_private_key_id",
+  "private_key": `-----BEGIN PRIVATE KEY-----\n${process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')}\n-----END PRIVATE KEY-----`,
+  "client_email": "chitralai@chitralai-471306.iam.gserviceaccount.com",
+  "client_id": "your_client_id",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/chitralai%40chitralai-471306.iam.gserviceaccount.com"
+};
+
+// Initialize Google Drive API
+let drive;
+
+async function initializeDriveAPI() {
+  if (drive) return drive;
+  
+  try {
+    const auth = new google.auth.GoogleAuth({
+      credentials: GOOGLE_SERVICE_ACCOUNT_KEY,
+      scopes: ['https://www.googleapis.com/auth/drive.readonly']
+    });
+    
+    drive = google.drive({ version: 'v3', auth });
+    return drive;
+  } catch (error) {
+    console.error('Error initializing Google Drive API:', error);
+    throw error;
+  }
+}
+
+// Helper function to sanitize filenames
+const sanitizeFilename = (filename) => {
+  const hasNumberInParentheses = filename.match(/\(\d+\)$/);
+  const numberInParentheses = hasNumberInParentheses ? hasNumberInParentheses[0] : '';
+  const filenameWithoutNumber = filename.replace(/\(\d+\)$/, '');
+  const sanitized = filenameWithoutNumber
+    .replace(/[^a-zA-Z0-9_.\-:]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_|_$/g, '');
+  return sanitized + numberInParentheses;
+};
+
 // Helper function to get branding information for an event
 async function getBrandingInfo(eventId) {
   try {
-    // Get event details from DynamoDB
-    const dynamodb = new AWS.DynamoDB.DocumentClient({
-      region: process.env.VITE_AWS_REGION,
-      accessKeyId: process.env.VITE_AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.VITE_AWS_SECRET_ACCESS_KEY
-    });
-    
-    const eventResult = await dynamodb.get({
+    const eventResult = await docClient.send(new GetCommand({
       TableName: 'Events',
       Key: { eventId: eventId }
-    }).promise();
+    }));
     
     if (!eventResult.Item) {
       console.log('Event not found:', eventId);
@@ -38,19 +89,17 @@ async function getBrandingInfo(eventId) {
     }
     
     const event = eventResult.Item;
-    console.log('Event found:', { eventId, organizerEmail: event.organizerEmail || event.userEmail });
-    
-    // Get user profile for branding and logo
     const userEmail = event.organizerEmail || event.userEmail;
+    
     if (!userEmail) {
       console.log('No user email found for event');
       return { branding: false, logoUrl: null };
     }
     
-    const userResult = await dynamodb.get({
+    const userResult = await docClient.send(new GetCommand({
       TableName: 'Users',
       Key: { email: userEmail }
-    }).promise();
+    }));
     
     if (!userResult.Item) {
       console.log('User not found:', userEmail);
@@ -87,7 +136,6 @@ async function downloadLogo(logoUrl) {
   try {
     if (!logoUrl) return null;
     
-    // Handle different logo URL formats
     let fetchUrl = logoUrl;
     
     // Special case for event 910245 - use public folder logo
@@ -98,7 +146,6 @@ async function downloadLogo(logoUrl) {
       // Convert S3 URL to proxy URL
       fetchUrl = `https://chitradup.netlify.app/api/proxy-image?url=${encodeURIComponent(logoUrl)}`;
     } else if (logoUrl) {
-      // Use logoUrl as-is if it's already a full URL
       fetchUrl = logoUrl;
     }
     
@@ -124,108 +171,28 @@ async function downloadLogo(logoUrl) {
   }
 }
 
-// Helper function to extract file ID from Google Drive URL
-function extractFileId(url) {
-  if (url.includes('uc?export=download')) {
-    const match = url.match(/id=([^&]+)/);
-    return match ? match[1] : null;
-  } else if (url.includes('/file/d/')) {
-    const match = url.match(/\/file\/d\/([^\/]+)/);
-    return match ? match[1] : null;
-  } else if (url.includes('uc?id=')) {
-    const match = url.match(/id=([^&]+)/);
-    return match ? match[1] : null;
-  }
-  return null;
-}
-
-// Helper function to download file from Google Drive
-async function downloadFromDrive(fileId) {
-  const urlsToTry = [
-    `https://drive.google.com/uc?export=download&id=${fileId}`,
-    `https://drive.google.com/uc?id=${fileId}`,
-    `https://drive.google.com/file/d/${fileId}/view`,
-    `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000-h1000`,
-    `https://lh3.googleusercontent.com/d/${fileId}`,
-    `https://docs.google.com/uc?export=download&id=${fileId}`
-  ];
-
-  for (let i = 0; i < urlsToTry.length; i++) {
-    try {
-      console.log(`Trying Google Drive URL ${i + 1}:`, urlsToTry[i]);
-      
-      const response = await fetch(urlsToTry[i], {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'image/*,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'DNT': '1',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Referer': 'https://drive.google.com/',
-          'Cache-Control': 'no-cache'
-        },
-        redirect: 'follow',
-        timeout: 60000 // 60 second timeout for large files
-      });
-
-      console.log(`URL ${i + 1} response status:`, response.status, response.statusText);
-      
-      if (response.ok) {
-        const contentType = response.headers.get('content-type');
-        const contentLength = response.headers.get('content-length');
-        console.log(`URL ${i + 1} content type:`, contentType, 'length:', contentLength);
-        
-        if (contentType && contentType.startsWith('image/')) {
-          console.log(`Successfully downloaded file with URL ${i + 1}, content-type:`, contentType);
-          
-          // Convert response to buffer directly
-          const buffer = await response.buffer();
-          console.log(`URL ${i + 1} downloaded successfully, buffer size:`, buffer.length);
-          return {
-            buffer: buffer,
-            contentType: contentType,
-            contentLength: contentLength
-          };
-        } else {
-          console.log(`URL ${i + 1} returned non-image content:`, contentType);
-          // Try to read the response body to see what we got
-          try {
-            const text = await response.text();
-            console.log(`URL ${i + 1} response body preview:`, text.substring(0, 200));
-          } catch (e) {
-            console.log(`URL ${i + 1} could not read response body`);
-          }
-        }
-      } else {
-        console.log(`URL ${i + 1} failed with status:`, response.status, response.statusText);
-        // Try to read error response
-        try {
-          const errorText = await response.text();
-          console.log(`URL ${i + 1} error response:`, errorText.substring(0, 200));
-        } catch (e) {
-          console.log(`URL ${i + 1} could not read error response`);
-        }
-      }
-    } catch (err) {
-      console.log(`URL ${i + 1} error:`, err.message);
-    }
-  }
-  
-  throw new Error(`All Google Drive URL attempts failed for file ID: ${fileId}. Please ensure the file is publicly accessible or shared with 'Anyone with the link can view' permission.`);
-}
-
-// Helper function to process and upload image
-async function processAndUploadImage(fileId, eventId, originalUrl, branding, logoUrl) {
+// Helper function to process and upload image with branding
+async function processAndUploadImage(fileId, fileName, eventId, branding, logoUrl) {
   try {
-    // Download from Google Drive
-    const { buffer, contentType } = await downloadFromDrive(fileId);
+    console.log(`Processing file: ${fileName} (ID: ${fileId})`);
+    
+    // Download from Google Drive using service account
+    const driveAPI = await initializeDriveAPI();
+    const fileResponse = await driveAPI.files.get({
+      fileId: fileId,
+      alt: 'media'
+    }, {
+      responseType: 'stream'
+    });
+    
+    // Convert stream to buffer
+    const chunks = [];
+    for await (const chunk of fileResponse.data) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
     
     console.log('Downloaded file size:', buffer.length, 'bytes');
-    
-    // Use branding information passed from frontend (same as manual uploads)
-    console.log('Using branding info from frontend:', { branding, logoUrl });
     
     let processedBuffer;
     
@@ -240,30 +207,26 @@ async function processAndUploadImage(fileId, eventId, originalUrl, branding, log
         const image = sharp(buffer);
         const { width: originalWidth, height: originalHeight } = await image.metadata();
         
-        // Calculate proportional watermark size based on image dimensions (matching manual upload logic)
+        // Calculate proportional watermark size based on image dimensions
         const minDimension = Math.min(originalWidth, originalHeight);
         const maxDimension = Math.max(originalWidth, originalHeight);
         
-        // Define size ranges for different image sizes (matching manual upload logic)
+        // Define size ranges for different image sizes
         let logoSize;
         if (minDimension < 800) {
-          // Small images: 20% of min dimension
           logoSize = Math.max(160, Math.floor(minDimension * 0.20));
         } else if (minDimension < 1600) {
-          // Medium images: 18% of min dimension
           logoSize = Math.max(200, Math.floor(minDimension * 0.18));
         } else if (minDimension < 3000) {
-          // Large images: 16% of min dimension
           logoSize = Math.max(300, Math.floor(minDimension * 0.16));
         } else {
-          // Very large images: 14% of min dimension
           logoSize = Math.max(400, Math.floor(minDimension * 0.14));
         }
         
         // Ensure logo doesn't exceed reasonable bounds
         logoSize = Math.min(logoSize, Math.floor(maxDimension * 0.35));
         
-        // Calculate proportional padding based on image size (matching manual upload logic)
+        // Calculate proportional padding based on image size
         let padding;
         if (minDimension < 800) {
           padding = Math.max(30, Math.floor(minDimension * 0.05));
@@ -282,16 +245,14 @@ async function processAndUploadImage(fileId, eventId, originalUrl, branding, log
         
         let finalLogoWidth, finalLogoHeight;
         if (logoAspectRatio > 1) {
-          // Wider than tall (landscape)
           finalLogoWidth = logoSize;
           finalLogoHeight = logoSize / logoAspectRatio;
         } else {
-          // Taller than wide (portrait) or square
           finalLogoHeight = logoSize;
           finalLogoWidth = logoSize * logoAspectRatio;
         }
         
-        // Position logo in bottom-left corner with padding (matching manual upload logic)
+        // Position logo in bottom-left corner with padding
         const logoX = padding;
         const logoY = originalHeight - finalLogoHeight - padding;
         
@@ -310,13 +271,13 @@ async function processAndUploadImage(fileId, eventId, originalUrl, branding, log
           .png()
           .toBuffer();
         
-        // Apply watermark with shadow effect (matching manual upload logic)
+        // Apply watermark with shadow effect
         processedBuffer = await image
           .resize({ width: 1024, withoutEnlargement: true })
           .composite([{
             input: resizedLogo,
-            left: Math.floor(logoX * (1024 / originalWidth)), // Scale position for resized image
-            top: Math.floor(logoY * (1024 / originalHeight)), // Scale position for resized image
+            left: Math.floor(logoX * (1024 / originalWidth)),
+            top: Math.floor(logoY * (1024 / originalHeight)),
             blend: 'over'
           }])
           .jpeg({ quality: 90 })
@@ -342,7 +303,7 @@ async function processAndUploadImage(fileId, eventId, originalUrl, branding, log
     
     // Generate S3 key
     const timestamp = Date.now();
-    const sanitizedFileName = `drive-${fileId}-${timestamp}.jpg`;
+    const sanitizedFileName = sanitizeFilename(fileName);
     const s3Key = `events/shared/${eventId}/images/${sanitizedFileName}`;
     
     // Upload to S3
@@ -375,14 +336,13 @@ async function processAndUploadImage(fileId, eventId, originalUrl, branding, log
       console.log('Indexed face for:', s3Key);
     } catch (faceErr) {
       console.error('Face indexing failed for:', s3Key, faceErr);
-      // Don't fail the whole process for face indexing errors
     }
     
     return {
       success: true,
       s3Key: s3Key,
       s3Url: `https://${BUCKET}.s3.amazonaws.com/${s3Key}`,
-      originalSize: totalLength,
+      originalSize: buffer.length,
       processedSize: processedBuffer.length,
       fileName: sanitizedFileName
     };
@@ -393,8 +353,43 @@ async function processAndUploadImage(fileId, eventId, originalUrl, branding, log
       success: false,
       error: error.message,
       fileId: fileId,
-      originalUrl: originalUrl
+      fileName: fileName
     };
+  }
+}
+
+// Helper function to get files from Google Drive folder
+async function getFilesFromFolder(folderId) {
+  try {
+    const driveAPI = await initializeDriveAPI();
+    
+    const response = await driveAPI.files.list({
+      q: `'${folderId}' in parents and mimeType contains 'image/'`,
+      fields: 'files(id, name, mimeType, size)',
+      pageSize: 1000
+    });
+    
+    return response.data.files || [];
+  } catch (error) {
+    console.error('Error listing files from folder:', error);
+    throw error;
+  }
+}
+
+// Helper function to get single file info
+async function getFileInfo(fileId) {
+  try {
+    const driveAPI = await initializeDriveAPI();
+    
+    const response = await driveAPI.files.get({
+      fileId: fileId,
+      fields: 'id, name, mimeType, size'
+    });
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error getting file info:', error);
+    throw error;
   }
 }
 
@@ -427,15 +422,13 @@ exports.handler = async function(event, context) {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { fileUrls, eventId, logoUrl, branding } = body;
+    const { driveLink, eventId } = body;
     
-    console.log('Received branding info from frontend:', { branding, logoUrl });
-    
-    if (!fileUrls || !Array.isArray(fileUrls) || fileUrls.length === 0) {
+    if (!driveLink) {
       return {
         statusCode: 400,
         headers: corsHeaders,
-        body: JSON.stringify({ error: 'Missing or invalid fileUrls array' })
+        body: JSON.stringify({ error: 'Missing driveLink' })
       };
     }
     
@@ -447,48 +440,137 @@ exports.handler = async function(event, context) {
       };
     }
 
-    console.log('Processing', fileUrls.length, 'files for event:', eventId);
+    console.log('Processing drive upload for event:', eventId);
 
-    // Process all files in parallel
-    const results = await Promise.all(
-      fileUrls.map(async (url) => {
-        const fileId = extractFileId(url);
-        if (!fileId) {
-          return {
-            success: false,
-            error: 'Could not extract file ID from URL',
-            originalUrl: url
-          };
-        }
-        return await processAndUploadImage(fileId, eventId, url, branding, logoUrl);
-      })
-    );
+    // Extract file or folder ID from the link
+    const fileMatch = driveLink.match(/file\/d\/([\w-]+)/);
+    const folderMatch = driveLink.match(/folders\/([\w-]+)/);
+
+    let files = [];
+
+    if (fileMatch) {
+      // Single file
+      const fileId = fileMatch[1];
+      const fileInfo = await getFileInfo(fileId);
+      files = [fileInfo];
+    } else if (folderMatch) {
+      // Folder
+      const folderId = folderMatch[1];
+      files = await getFilesFromFolder(folderId);
+    } else {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({ error: 'Invalid Google Drive link' })
+      };
+    }
+
+    if (files.length === 0) {
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          success: true,
+          message: 'No image files found',
+          results: []
+        })
+      };
+    }
+
+    // Get branding information
+    const { branding, logoUrl } = await getBrandingInfo(eventId);
+    console.log('Using branding info:', { branding, logoUrl });
+
+    // Process files in batches to avoid memory issues
+    const BATCH_SIZE = 3;
+    const results = [];
+    let totalOriginalBytes = 0;
+    let totalCompressedBytes = 0;
+
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      
+      console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(files.length / BATCH_SIZE)}`);
+      
+      const batchResults = await Promise.all(
+        batch.map(async (file) => {
+          const result = await processAndUploadImage(file.id, file.name, eventId, branding, logoUrl);
+          if (result.success) {
+            totalOriginalBytes += result.originalSize;
+            totalCompressedBytes += result.processedSize;
+          }
+          return result;
+        })
+      );
+      
+      results.push(...batchResults);
+    }
 
     const successful = results.filter(r => r.success);
     const failed = results.filter(r => !r.success);
 
     console.log('Processing complete:', successful.length, 'successful,', failed.length, 'failed');
 
+    // Update event statistics
+    if (successful.length > 0) {
+      try {
+        const bytesToMB = (bytes) => Number((bytes / (1024 * 1024)).toFixed(2));
+        const bytesToGB = (bytes) => Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
+        const convertToAppropriateUnit = (bytes) => {
+          const mb = bytesToMB(bytes);
+          if (mb >= 1024) {
+            return { size: bytesToGB(bytes), unit: 'GB' };
+          }
+          return { size: mb, unit: 'MB' };
+        };
+
+        const { size: totalImageSize, unit: totalImageSizeUnit } = convertToAppropriateUnit(totalOriginalBytes);
+        const { size: totalCompressedSize, unit: totalCompressedSizeUnit } = convertToAppropriateUnit(totalCompressedBytes);
+
+        await docClient.send(new UpdateCommand({
+          TableName: 'Events',
+          Key: { eventId },
+          UpdateExpression: 'ADD photoCount :pc SET totalImageSize = :tis, totalImageSizeUnit = :tisUnit, totalCompressedSize = :tcs, totalCompressedSizeUnit = :tcsUnit',
+          ExpressionAttributeValues: {
+            ':pc': successful.length,
+            ':tis': totalImageSize,
+            ':tisUnit': totalImageSizeUnit,
+            ':tcs': totalCompressedSize,
+            ':tcsUnit': totalCompressedSizeUnit
+          }
+        }));
+
+        console.log('Updated event statistics');
+      } catch (updateError) {
+        console.error('Error updating event statistics:', updateError);
+      }
+    }
+
     return {
       statusCode: 200,
       headers: corsHeaders,
       body: JSON.stringify({
         success: true,
-        totalFiles: fileUrls.length,
+        totalFiles: files.length,
         successful: successful.length,
         failed: failed.length,
         results: results,
         successfulFiles: successful,
-        failedFiles: failed
+        failedFiles: failed,
+        totalOriginalBytes,
+        totalCompressedBytes
       })
     };
 
   } catch (err) {
-    console.error('Error in process-drive-files function:', err);
+    console.error('Error in drive-upload function:', err);
     return {
       statusCode: 500,
       headers: corsHeaders,
-      body: JSON.stringify({ error: 'Internal server error', details: err.message })
+      body: JSON.stringify({ 
+        error: 'Internal server error', 
+        details: err.message 
+      })
     };
   }
 };

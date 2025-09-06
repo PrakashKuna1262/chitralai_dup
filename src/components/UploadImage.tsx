@@ -1703,12 +1703,13 @@ const UploadImage = () => {
   // Utility to get backend URL based on environment
   const getBackendUrl = () => {
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      return 'http://localhost:3001';
+      // For local development, use the production API or Netlify dev server
+      return '/api';  // This will work with Netlify dev server
     }
-    return '/api';  // Changed from /.netlify/functions to /api
+    return '/api';  // Production API endpoint
   };
 
-  // In handleGoogleLink, replace hardcoded URLs with getBackendUrl()
+  // New optimized Google Drive upload handler using service account
   const handleGoogleLink = useCallback(async () => {
     if (!driveLink) {
       setPopup({ type: 'warning', message: 'Please enter your Google Drive link.' });
@@ -1718,6 +1719,7 @@ const UploadImage = () => {
       setPopup({ type: 'warning', message: 'Please select or create an event before uploading images.' });
       return;
     }
+    
     setIsDriveUploading(true);
     setDriveUploadProgress(0);
     setDriveFillProgress(0);
@@ -1728,7 +1730,7 @@ const UploadImage = () => {
     if (fillIntervalRef.current) clearInterval(fillIntervalRef.current);
     setUpdatingDots('');
 
-    // Start blue fill animation (10% per second up to 75%)
+    // Start progress animation
     let fill = 0;
     fillIntervalRef.current = setInterval(() => {
       setDriveFillProgress(prev => {
@@ -1740,22 +1742,40 @@ const UploadImage = () => {
           return prev;
         }
       });
-    }, 1000); // 10% per second
+    }, 1000);
+
     try {
-      // 1. Get the list of image URLs from the backend (do not upload yet)
-      const response = await fetch(`${getBackendUrl()}/drive-list`, {
+      console.log('Starting Google Drive upload process...');
+      
+      // Use the new drive-upload endpoint that handles everything server-side
+      const response = await fetch(`${getBackendUrl()}/drive-upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           driveLink,
-          eventId: selectedEvent,
-          onlyList: true
+          eventId: selectedEvent
         })
       });
-      if (!response.ok) throw new Error('Failed to get images from Google Drive.');
-      const result = await response.json(); // [{name, url}]
-      if (!Array.isArray(result) || result.length === 0) {
-        setPopup({ type: 'warning', message: 'No images were found in the provided Drive folder.' });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        
+        // Handle local development case
+        if (errorData.error && errorData.error.includes('not available in local development')) {
+          throw new Error('Drive upload is not available in local development. Please use the production environment or run "netlify dev" to test this feature locally.');
+        }
+        
+        throw new Error(errorData.error || 'Failed to process Google Drive upload');
+      }
+
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Upload failed');
+      }
+
+      if (result.successful === 0) {
+        setPopup({ type: 'warning', message: 'No images were found or processed from the provided Drive folder.' });
         setIsDriveUploading(false);
         setDriveUploadResult('error');
         setDriveFillProgress(100);
@@ -1765,191 +1785,73 @@ const UploadImage = () => {
         }, 3000);
         return;
       }
-      // 2. Prepare for progress tracking
-      const totalCount = result.length;
-      let totalOriginalBytes = 0;
-      let totalCompressedBytes = 0;
-      let totalUploadedBytes = 0;
-      let totalUploadedCount = 0;
-      const allUploadedUrls: string[] = [];
-      setDualProgress({
-        optimization: {
-          current: 0,
-          total: totalCount,
-          processedBytes: 0,
-          totalBytes: 0,
-          estimatedTimeRemaining: 0
-        },
-        upload: {
-          current: 0,
-          total: totalCount,
-          processedBytes: 0,
-          totalBytes: 0,
-          uploadSpeed: 0,
-          estimatedTimeRemaining: 0
-        },
-        currentStage: 'optimization'
+
+      // Extract successful upload URLs
+      const allUploadedUrls = result.successfulFiles.map((file: any) => file.s3Url);
+      
+      console.log('Drive upload completed:', {
+        total: result.totalFiles,
+        successful: result.successful,
+        failed: result.failed,
+        totalOriginalBytes: result.totalOriginalBytes,
+        totalCompressedBytes: result.totalCompressedBytes
       });
-      // 3. For each image, download, watermark, and upload (batching for large sets)
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < result.length; i += BATCH_SIZE) {
-        const batch = result.slice(i, i + BATCH_SIZE);
-        // Get branding and logo for this batch
-        const brandingFromStorage = localStorage.getItem('branding');
-        let currentBranding = brandingFromStorage ? JSON.parse(brandingFromStorage) : false;
-        
-        // Force branding to be enabled for event 910245
-        console.log('[Drive Upload] Checking selectedEvent:', selectedEvent, 'Type:', typeof selectedEvent);
-        if (String(selectedEvent) === "910245") {
-          currentBranding = true;
-          console.log('[Drive Upload] Forcing branding ON for event 910245');
-        }
-        
-        // Determine logo URL based on event
-        let currentLogoUrl = logoUrl;
-        if (String(selectedEvent) === "910245") {
-          currentLogoUrl = "/taf and child logo.png";
-          console.log('[Drive Upload] Using specific logo for event 910245:', currentLogoUrl);
-        }
-        // Download, watermark, and upload in parallel
-        const compressResults = await Promise.all(batch.map(async (fileObj) => {
-          try {
-            // Download image as blob via backend proxy
-            const proxyUrl = `${getBackendUrl()}/proxy-drive-image?url=${encodeURIComponent(fileObj.url)}`;
-            const imgResp = await fetch(proxyUrl);
-            if (!imgResp.ok) throw new Error('Failed to download image from Drive (proxy).');
-            const blob = await imgResp.blob();
-            totalOriginalBytes += blob.size;
-            // Convert to File
-            const file = new File([blob], fileObj.name, { type: blob.type });
-            const jpgFile = await convertToJpg(file);
-            // Watermark
-            console.log('[Drive Upload] Calling compressImage with:', {
-              branding: currentBranding,
-              logoUrl: currentLogoUrl,
-              selectedEvent: selectedEvent
-            });
-            const watermarkedBlob = await compressImage(jpgFile, 0.8, currentBranding, currentLogoUrl);
-            totalCompressedBytes += watermarkedBlob.size;
-            const watermarkedFile = new File([watermarkedBlob], fileObj.name, { type: 'image/jpeg' });
-            return { file: watermarkedFile, size: watermarkedBlob.size, name: fileObj.name };
-          } catch (err) {
-            console.error('[Drive Upload] Error processing file:', fileObj.name, err);
-            return null;
-          }
-        }));
-        // Upload all compressed files in the batch in parallel
-        const uploadResults = await Promise.all(compressResults.map(async (res) => {
-          if (!res) return null;
-          try {
-            const uploadResult = await uploadToS3WithRetry(res.file, res.name);
-            allUploadedUrls.push(uploadResult);
-            totalUploadedBytes += res.size;
-            totalUploadedCount++;
-            return uploadResult;
-          } catch (error) {
-            console.error('[Drive Upload] Error uploading file:', res.name, error);
-            return null;
-          }
-        }));
-        // Update progress
-        setDualProgress(prev => prev && {
-          ...prev,
-          optimization: {
-            ...prev.optimization,
-            current: Math.min(prev.optimization.current + batch.length, totalCount),
-            processedBytes: totalOriginalBytes,
-            totalBytes: totalOriginalBytes + (prev.optimization.totalBytes - prev.optimization.processedBytes)
-          },
-          upload: {
-            ...prev.upload,
-            current: Math.min(prev.upload.current + batch.length, totalCount),
-            processedBytes: totalUploadedBytes,
-            totalBytes: totalCompressedBytes + (prev.upload.totalBytes - prev.upload.processedBytes)
-          },
-          currentStage: 'upload'
-        });
-      }
+
       setUploadedUrls(allUploadedUrls);
       setGoogleDriveLink('');
       setUploadSuccess(true);
-      setShowQRModal(true); // QR modal shows immediately after upload
-      setIsDriveUploading(false); // Re-enable the button immediately after QR modal is shown
-      setDriveFillProgress(100); // Instantly fill the progress bar
+      setShowQRModal(true);
+      setIsDriveUploading(false);
+      setDriveFillProgress(100);
+      
       setPopup({
         type: 'success',
-        message: 'Upload success!'
+        message: `Upload success! ${result.successful} images processed and uploaded.`
       });
       setDriveUploadResult('success');
       setDriveUploadProgress(100);
-      // Animate blue fill from 0% to 75% at 1% per 10ms, then pause
+      setDualProgress(null);
+
+      // Animate progress bar
       setDriveFillProgress(0);
       let fill = 0;
       const fillInterval = setInterval(() => {
         fill += 1;
         setDriveFillProgress(fill);
-        if (fill >= 75) {
+        if (fill >= 100) {
           clearInterval(fillInterval);
         }
-      }, 10); // 10ms per 1% for demo, adjust as needed
-      setDualProgress(null);
+      }, 20);
 
-      // Instead of instantly setting fill to 100, animate it smoothly from current value to 100% over 0.5s
-      const animateFillTo100 = () => {
-        const start = driveFillProgress;
-        const end = 100;
-        const duration = 500; // ms
-        const startTime = Date.now();
-        function animate() {
-          const now = Date.now();
-          const elapsed = now - startTime;
-          const progress = Math.min(1, elapsed / duration);
-          const value = Math.round(start + (end - start) * progress);
-          setDriveFillProgress(value);
-          if (progress < 1) {
-            requestAnimationFrame(animate);
-          }
-        }
-        animate();
-      };
-      animateFillTo100();
-      setUpdatingDots('');
-      // Show 'Success' for 3 seconds, then reset
-      setTimeout(() => {
-        setDriveUploadResult('idle');
-        setDriveFillProgress(100);
-        setUpdatingDots('');
-        // Do not reset driveFillProgress to 0 here
-      }, 3000);
-
-      // Trigger DB update after all uploads from Drive
-      try {
-        await fetch(`${getBackendUrl()}/events/post-upload-process`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ eventId: selectedEvent })
-        });
-      } catch (err) {
-        console.error('Failed to update DB after Drive upload:', err);
+      // Show success message with statistics
+      if (result.failed > 0) {
+        setTimeout(() => {
+          setPopup({
+            type: 'warning',
+            message: `Upload completed with ${result.successful} successful and ${result.failed} failed uploads.`
+          });
+        }, 2000);
       }
-    } catch (err: any) {
-      setPopup({ type: 'error', message: 'Error uploading from Google Drive: ' + (err.message || err) });
+
+    } catch (error: any) {
+      console.error('Drive upload error:', error);
+      setPopup({ 
+        type: 'error', 
+        message: `Upload failed: ${error.message}` 
+      });
+      setIsDriveUploading(false);
       setDriveUploadResult('error');
       setDriveFillProgress(100);
-      setDualProgress(null);
       driveProgressTimeout.current = setTimeout(() => {
         setDriveUploadResult('idle');
         setDriveFillProgress(0);
       }, 3000);
     } finally {
-      setIsDriveUploading(false);
-      if (updatingIntervalRef.current) clearInterval(updatingIntervalRef.current);
       if (fillIntervalRef.current) clearInterval(fillIntervalRef.current);
+      if (updatingIntervalRef.current) clearInterval(updatingIntervalRef.current);
       setUpdatingDots('');
-      setDriveFillProgress(100); // Instantly fill to 100% blue
-      setDriveUploadResult('idle'); // Reset to initial state
     }
-  }, [driveLink, selectedEvent, driveFillProgress, logoUrl]);
+  }, [driveLink, selectedEvent, logoUrl, setPopup, setUploadedUrls, setGoogleDriveLink, setUploadSuccess, setShowQRModal, setIsDriveUploading, setDriveFillProgress, setDriveUploadResult, setDriveUploadProgress, setDualProgress, setUpdatingDots, getBackendUrl]);
 
   useEffect(() => {
     const fetchBranding = async () => {

@@ -715,6 +715,52 @@ app.post('/events/post-upload-process', async (req, res) => {
   }
 });
 
+// Drive upload endpoint for local development
+app.post('/api/drive-upload', async (req, res) => {
+  console.log('[DEBUG] Drive upload endpoint called');
+  
+  // Set CORS headers
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Max-Age': '86400'
+  });
+
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  try {
+    const { driveLink, eventId } = req.body;
+    
+    if (!driveLink) {
+      return res.status(400).json({ error: 'Missing driveLink' });
+    }
+    
+    if (!eventId) {
+      return res.status(400).json({ error: 'Missing eventId' });
+    }
+
+    console.log('Processing drive upload for event:', eventId);
+
+    // For local development, redirect to the actual Netlify function
+    // or implement a simplified version here
+    return res.status(501).json({ 
+      error: 'Drive upload not available in local development. Please use the production environment or Netlify dev server.',
+      suggestion: 'Run "netlify dev" to test drive upload functionality locally'
+    });
+
+  } catch (err) {
+    console.error('Error in drive-upload endpoint:', err);
+    res.status(500).json({ 
+      error: 'Internal server error', 
+      details: err.message 
+    });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err);
