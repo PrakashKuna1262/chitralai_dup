@@ -67,6 +67,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/drive-upload-complete"
+  to = "/.netlify/functions/drive-upload-complete"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

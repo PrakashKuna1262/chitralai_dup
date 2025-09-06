@@ -1747,8 +1747,8 @@ const UploadImage = () => {
     try {
       console.log('Starting Google Drive upload process...');
       
-      // Use the fixed drive-upload endpoint (no JWT, no private key issues)
-      const response = await fetch(`${getBackendUrl()}/drive-upload-fixed`, {
+      // Use the complete drive-upload endpoint (full manual upload functionality)
+      const response = await fetch(`${getBackendUrl()}/drive-upload-complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -1785,17 +1785,21 @@ const UploadImage = () => {
         return;
       }
 
-      // Extract uploaded URLs - handle different response structures
+      // Extract uploaded URLs - handle complete response structure
       let allUploadedUrls = [];
       
-      if (result.testFile && result.testFile.s3Url) {
+      if (result.successfulFiles && Array.isArray(result.successfulFiles)) {
+        // Complete version with successfulFiles array
+        allUploadedUrls = result.successfulFiles.map((file: any) => file.s3Url);
+        console.log('Complete upload successful:', {
+          total: result.totalFiles,
+          successful: result.successful,
+          failed: result.failed
+        });
+      } else if (result.testFile && result.testFile.s3Url) {
         // Single file upload (fixed version)
         allUploadedUrls = [result.testFile.s3Url];
         console.log('Single file upload successful:', result.testFile);
-      } else if (result.successfulFiles && Array.isArray(result.successfulFiles)) {
-        // Multiple files upload (original version)
-        allUploadedUrls = result.successfulFiles.map((file: any) => file.s3Url);
-        console.log('Multiple files upload successful:', result.successfulFiles);
       } else if (result.results && Array.isArray(result.results)) {
         // Alternative structure
         allUploadedUrls = result.results.map((file: any) => file.s3Url || file.url).filter(Boolean);
@@ -1821,9 +1825,14 @@ const UploadImage = () => {
       setIsDriveUploading(false);
       setDriveFillProgress(100);
       
+      // Show detailed success message
+      const successMessage = result.failed > 0 
+        ? `Upload completed! ${result.successful} successful, ${result.failed} failed uploads.`
+        : `Upload success! ${result.successful} image(s) processed and uploaded.`;
+      
       setPopup({
         type: 'success',
-        message: `Upload success! ${allUploadedUrls.length} image(s) processed and uploaded.`
+        message: successMessage
       });
       setDriveUploadResult('success');
       setDriveUploadProgress(100);
